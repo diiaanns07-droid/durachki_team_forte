@@ -1,0 +1,33 @@
+# ТЕСТОВАЯ ФИКСТУРА (A14) в формате каталога A13 v2: legal_status / legal_note / exclusions / documents.
+# Тексты и пункты вымышлены. Не нормы РК.
+version: 2
+fixture: true
+documents:
+  fx_cash:
+    title: "ФИКСТУРА: Правила кассовых операций (полное название)"
+    short: "ФИКСТУРА: Правила кассы (№ 1)"
+    url: "https://example.invalid/fixture/cash"
+    source_file: "sources/fx_cash.md"
+types:
+  V01:
+    name: "Посторонний в зоне кассира"
+    legal_status: disabled
+    legal_note: "Норма о допуске посторонних в кассовую зону не подтверждена."
+    observable: ["человек не из персонала на стороне кассира"]
+    not_observable: ["наличие допуска"]
+    exclusions: ["клиент сидит напротив кассира с клиентской стороны"]
+    rules:
+      - {document: "ФИКСТУРА: Правила кассы (краткое)", clause: "п. 3", url: "https://example.invalid/fixture/cash", quote: "Посторонние в кассу не допускаются.", verified: false}
+  V08:
+    name: "Пересчёт наличных не в присутствии клиента"
+    legal_status: candidate
+    legal_note: "Пункт 20 фикстуры: пересчёт в присутствии клиента; применимо только к приёму наличных."
+    observable: ["кассир пересчитывает наличные, когда клиента у окна нет"]
+    not_observable: ["вид операции", "сумма"]
+    exclusions: ["клиент сам пересчитывает деньги у кассы (п. 35 фикстуры)", "внутренний пересчёт без клиента", "руки перекрыты счётчиком банкнот из-за ракурса"]
+    rules:
+      - {document: "ФИКСТУРА: Правила кассовых операций (так в rules)", clause: "п. 20", url: "https://example.invalid/fixture/cash", quote: "Наличные пересчитываются в присутствии клиента.", verified: false}
+  V99:
+    name: "Иное видимое подозрительное действие"
+    legal_status: disabled
+    rules: []

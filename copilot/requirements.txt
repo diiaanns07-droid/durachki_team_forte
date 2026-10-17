@@ -1,0 +1,17 @@
+# Sentinel Copilot (A14). Ядро лёгкое: без весов и GPU работает status/report/mock и тесты.
+# Проверено: Python 3.11, numpy 2.4.6, PyYAML 6.0.3, fastapi 0.143.3, pydantic 2.14.1, pytest 9.1.1, httpx 0.28.1.
+numpy>=1.26,<3
+PyYAML>=6.0,<7
+pydantic>=2.6,<3
+fastapi>=0.110          # только для copilot/router.py (у A02 уже есть)
+
+# --- OPTIONAL: локальная LLM (MIT). Для GPU — сборка с CUDA:
+#   CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python==0.3.16 --no-cache-dir
+# llama-cpp-python>=0.3.2,<0.4
+
+# --- OPTIONAL: эмбеддинги e5 (Apache-2.0); без них — встроенный hashing-эмбеддер
+# sentence-transformers>=3.0,<6
+
+# --- tests
+pytest>=8
+httpx>=0.27

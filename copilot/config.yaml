@@ -1,0 +1,97 @@
+# Sentinel Copilot (A14) — все пороги и пути. Переопределение: env COPILOT_CONFIG=<path>
+# или точечно через env-переменные (см. README, раздел «Для интегратора»).
+
+# Copilot — ОПЦИОНАЛЬНЫЙ модуль. На 8 ГБ VRAM ресурсы делятся с VLM, поэтому по умолчанию выключен.
+# false — выключен (ask -> 501); true — включён; mock — включён только при SENTINEL_MOCK=1.
+# env COPILOT_ENABLED=1/0 имеет приоритет.
+enabled: mock
+
+corpus:
+  # Каталог норм (владелец A13). Пути относительны корня репозитория.
+  catalog_path: norms/catalog.yaml
+  sources_glob: norms/sources/*.md
+  # Фикстура (тестовые, заведомо НЕ настоящие нормы) — только для тестов/мок-режима.
+  # auto = разрешена, если SENTINEL_MOCK=1 или COPILOT_ALLOW_FIXTURE=1.
+  fixture_fallback: auto
+  fixture_dir: copilot/fixtures/norms
+  chunk_max_chars: 900
+  chunk_overlap_chars: 120
+  chunk_min_chars: 40
+  # Формат A13: разделы-не-нормы и служебные строки не цитируются; преамбулу под H1 пропускаем
+  skip_sections_regex: 'не\s+цитат|пересказ|todo|реквизит|статус|провенанс'
+  skip_lines_regex: '^\s*(?:провенанс|источник|\*\*внимание|внимание:)'
+  skip_preamble: true
+  cite_disabled: false     # нормы типов с legal_status=disabled не цитируем (честно «без пункта»)
+
+embed:
+  # auto: e5 (sentence-transformers / transformers), если веса есть локально; иначе hashing.
+  backend: auto            # auto | e5 | hashing
+  model: intfloat/multilingual-e5-small
+  hf_cache_dir: weights/hf/hub  # офлайн-веса L1 (если папки нет — стандартный кэш HF); только local_files_only
+  device: cpu              # корпус маленький — VRAM оставляем VLM
+  batch_size: 32
+  hashing_dim: 4096
+  cache_dir: cache/copilot # gitignored
+
+rag:
+  top_k: 4
+  min_score: 0.12          # ниже — фрагмент не считается найденным (для hashing; e5 ~0.75)
+  min_score_e5: 0.78
+  hybrid_lexical_weight: 0.35   # доля лексического (BM25-подобного) скора в гибридном ранжировании
+  boost_violation_types: 0.15   # бонус нормам по type_id нарушений из результата
+  # «найдено поиском» (не каталог) показываем, только если фрагмент реально похож на вопрос:
+  retrieved_min_overlap: 2      # ≥ N необщих слов вопроса во фрагменте
+  retrieved_min_dense: 0.25     # или косинус hashing ≥
+  retrieved_min_dense_e5: 0.82  # или косинус e5 ≥ (не тюнилось на реальных данных)
+
+llm:
+  # auto: общая Qwen3-VL-4B через ml.vlm.service.chat (A11) -> локальный llama.cpp server, если задан.
+  # llama_cpp (отдельная модель в процессе) — только явно: на 8 ГБ рядом с VLM не помещается.
+  backend: auto            # auto | vlm_service | llama_server | llama_cpp | extractive | mock
+  no_model_mode: retrieval # retrieval — без модели отвечаем из фактов и норм с пометкой; unavailable — 501
+  busy_policy: retrieval   # GPU занят анализом: retrieval — ответ без генерации с пометкой; error — 503
+  retrieval_notice_in_answer: true  # пометка режима первой строкой answer (A15 показывает только answer)
+  # Кандидаты GGUF (первый существующий файл побеждает). Пути — от корня репо или абсолютные.
+  model_candidates:
+    - weights/copilot/sentinel-copilot-q4_k_m.gguf        # после LoRA + merge + quantize
+    - weights/copilot/Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+    - weights/copilot/Qwen2.5-7B-Instruct-Q4_K_M.gguf
+  lora_path: null          # GGUF-адаптер LoRA (опционально, вместо merge)
+  n_ctx: 4096
+  n_threads: null          # null = автоматически
+  gpu_layers: auto         # auto | -1 (всё на GPU) | 0 (CPU) | N (частичный offload)
+  vram_reserve_mb: 1500    # сколько VRAM оставить другим (VLM/детектор) при auto
+  model_n_layers: 36       # для оценки частичного offload (Qwen3-4B: 36, Qwen2.5-7B: 28)
+  idle_unload_s: 300       # выгружать модель после простоя (освобождает VRAM)
+  max_tokens: 512
+  temperature: 0.2
+  top_p: 0.9
+  repeat_penalty: 1.05
+  timeout_s: 45            # бюджет генерации; по таймауту — честная ошибка timeout (HTTP 504)
+  max_norm_refs: 6         # сколько фрагментов норм максимум кладём в контекст
+  server_url: null         # напр. http://127.0.0.1:8081 (llama.cpp server). Только локальные адреса!
+  allow_private_hosts: true  # 10.x/172.16-31.x/192.168.x и docker-имена без точки
+
+vlm_service:
+  module: ml.vlm.service   # A11: chat(messages, *, max_new_tokens, timeout_s, wait_s, temperature) -> ChatResult
+  function: chat
+  priority: low            # передаётся, только если chat явно принимает priority (A11 ставит приоритет чата сам)
+  wait_s: 10               # сколько ждать GPU, прежде чем ответить без генерации
+  runtime_adapter: false   # ВРЕМЕННО: прямой адаптер к ml.vlm.runtime, пока нет service.chat (только тёплая VLM)
+  allow_cold_load: false   # копилот НЕ загружает VLM сам: в проде она в процессе-воркере A03 (вторая копия = OOM)
+  max_input_chars: 11000   # A11 service.chat.max_input_chars = 12000 — промпт копилота укладывается с запасом
+
+guard:
+  timecode_tolerance_s: 1.5
+  min_support_ratio: 0.3   # доля слов предложения, опирающихся на результат/нормы; ниже — вырезается
+  max_question_chars: 2000
+  max_history_turns: 8
+  max_history_chars: 4000
+
+report:
+  html_include_frames: true   # HTML-заключение: встроить кадры-доказательства (только валидный base64 JPEG)
+  html_max_frames: 3
+  html_max_frame_kb: 600
+  disclaimer: >-
+    Это автоматическая подсказка для проверяющего, а не юридическое заключение.
+    Решение о наличии нарушения принимает человек после просмотра видео.

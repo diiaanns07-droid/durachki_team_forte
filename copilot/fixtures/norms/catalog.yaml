@@ -1,0 +1,78 @@
+# ТЕСТОВАЯ ФИКСТУРА Sentinel Copilot (A14). НЕ НОРМЫ РК!
+# Документы и пункты ниже вымышлены и нужны только для тестов/мок-режима, когда
+# norms/catalog.yaml (владелец A13) ещё не смерджен. URL в зоне .invalid намеренно нерабочие.
+# В проде используется ТОЛЬКО norms/catalog.yaml (правило 5).
+version: 1
+fixture: true
+types:
+  V01:
+    name: "Посторонний в кассовом помещении"
+    observable: ["человек, не являющийся кассиром, находится за кассовым столом / в зоне кассира"]
+    not_observable: ["наличие допуска у лица", "личность человека"]
+    description_template: "На {t} с видно: {facts}. Это может быть признаком нахождения постороннего в кассовой зоне."
+    severity: high
+    rules:
+      - {document: "ФИКСТУРА: Тестовый регламент кассы", clause: "п. 3", url: "https://example.invalid/fixture/reglament#p3", quote: "Нахождение посторонних лиц в кассовой зоне не допускается.", verified: false}
+  V02:
+    name: "Рабочее место кассира оставлено без присмотра"
+    observable: ["кассир отсутствует в кадре или вне рабочей зоны", "наличные/ценности видны на столе"]
+    not_observable: ["причина отсутствия кассира"]
+    description_template: "На {t} с видно: {facts}."
+    severity: high
+    rules:
+      - {document: "ФИКСТУРА: Тестовый регламент кассы", clause: "п. 5", url: "https://example.invalid/fixture/reglament#p5", quote: "Кассир не оставляет ценности без присмотра.", verified: false}
+  V03:
+    name: "Сейф открыт без присмотра или при посторонних"
+    observable: ["дверца сейфа открыта", "кассир отошёл от открытого сейфа"]
+    not_observable: ["содержимое сейфа"]
+    description_template: "На {t} с видно: {facts}."
+    severity: high
+    rules:
+      - {document: "ФИКСТУРА: Тестовый регламент кассы", clause: "п. 7", url: "https://example.invalid/fixture/reglament#p7", quote: "Сейф закрывается при уходе кассира с рабочего места.", verified: false}
+  V04:
+    name: "Дверь кассового помещения открыта"
+    observable: ["дверь/перегородка открыта во время операций"]
+    not_observable: ["кто открыл дверь и по какой причине"]
+    description_template: "На {t} с видно: {facts}."
+    severity: medium
+    rules:
+      - {document: "ФИКСТУРА: Тестовая инструкция по охране", clause: "п. 2", url: "https://example.invalid/fixture/ohrana#p2", quote: "Дверь кассового помещения во время операций закрыта.", verified: false}
+  V05:
+    name: "Использование мобильного телефона при работе с ценностями"
+    observable: ["телефон в руке кассира или у уха при наличных на столе"]
+    not_observable: ["с кем и о чём разговор"]
+    description_template: "На {t} с видно: {facts}."
+    severity: medium
+    rules:
+      - {document: "ФИКСТУРА: Тестовый регламент кассы", clause: "п. 9", url: "https://example.invalid/fixture/reglament#p9", quote: "Пользоваться мобильным телефоном при работе с ценностями запрещено.", verified: false}
+  V06:
+    name: "Приём пищи или напитков на рабочем месте с наличными"
+    observable: ["кассир ест или пьёт", "наличные на столе"]
+    not_observable: []
+    description_template: "На {t} с видно: {facts}."
+    severity: low
+    rules:
+      - {document: "ФИКСТУРА: Тестовый регламент кассы", clause: "п. 11", url: "https://example.invalid/fixture/reglament#p11", quote: "Приём пищи на рабочем месте при наличии ценностей не допускается.", verified: false}
+  V07:
+    name: "Нарушение порядка приёма-передачи инкассаторской сумки"
+    observable: ["инкассаторская сумка без присмотра", "сумка вскрыта при посторонних"]
+    not_observable: ["содержимое сумки", "сумма вложения"]
+    description_template: "На {t} с видно: {facts}."
+    severity: high
+    rules:
+      - {document: "ФИКСТУРА: Тестовая инструкция по инкассации", clause: "п. 4", url: "https://example.invalid/fixture/inkassacia#p4", quote: "Сумка с ценностями передаётся из рук в руки в кассовом помещении.", verified: false}
+  V08:
+    name: "Пересчёт или передача наличных вне обзора камеры"
+    observable: ["руки с наличными вне кадра или скрыты"]
+    not_observable: ["сумма и подлинность наличных"]
+    description_template: "На {t} с видно: {facts}."
+    severity: medium
+    rules:
+      - {document: "ФИКСТУРА: Тестовый регламент кассы", clause: "п. 13", url: "https://example.invalid/fixture/reglament#p13", quote: "Пересчёт наличных ведётся в зоне видеонаблюдения.", verified: false}
+  V99:
+    name: "Иное подозрительное действие"
+    observable: ["конкретное видимое действие, требующее проверки человеком"]
+    not_observable: ["умысел"]
+    description_template: "На {t} с видно: {facts}."
+    severity: low
+    rules: []
