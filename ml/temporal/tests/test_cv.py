@@ -20,7 +20,7 @@ def test_nested_cv_baseline_report(cfg):
     assert {"recall@3", "recall@5", "recall@8", "mean_n"} <= set(rep["candidates"]["hybrid"])
     assert rep["candidates"]["hybrid"]["mean_n"] <= 8
     assert {"duration_only_auc", "spearman_neg", "warn"} <= set(rep["duration_watchdog"])
-    assert {"peak", "onset"} <= set(rep["timecode_by_policy"])
+    assert {"peak", "onset", "change_onset"} <= set(rep["timecode_by_policy"])
     assert "разведочная" in rep["evaluation_status"]
     assert all(set(v["scores_by_pooling"]) == {"max", "topk", "topk_null"} for v in rep["per_video"])
 
@@ -69,3 +69,17 @@ def test_cv_invariant_to_row_order(cfg):
     sa = {v["name"]: v["score"] for v in a["per_video"]}
     sb = {v["name"]: v["score"] for v in b["per_video"]}
     assert sa.keys() == sb.keys() and all(abs(sa[k] - sb[k]) < 1e-3 for k in sa)
+
+
+def test_bench_temporal_config_smoke(cfg):
+    import pytest
+
+    pytest.importorskip("torch")
+    from ml.temporal import bench
+
+    samples, bank = make_samples(n_pos=4, n_neg=4, T=60), make_bank()
+    c = {**cfg, "train": {**cfg["train"], "steps_per_epoch": 2}}
+    rep = bench.run_bench(c, ["E2"], folds=2, repeats=1, inner=2, seed=0, samples=samples, bank=bank, epochs=1)
+    s = rep["experiments"]["E2"]["summary"]
+    assert rep["experiments"]["E2"]["kind"] == "temporal" and s["n_repeats"] == 1
+    assert s["latency_model_ms_per_video"]["mean"] is not None

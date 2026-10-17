@@ -169,6 +169,32 @@ def hf_cache_dir(cfg: dict) -> Optional[str]:
     return str(path) if path.is_dir() else None
 
 
+def hf_revision(model_id: str, cfg: dict) -> Optional[str]:
+    """Коммит офлайн-снапшота модели в HF-кэше (models--org--name/refs/main) или None. Входит в ключ кэша
+    признаков: другая ревизия весов -> другие эмбеддинги -> кэш и чекпоинт не переиспользуются молча."""
+    dirs: list[Path] = []
+    for env in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"):
+        if os.environ.get(env):
+            dirs.append(Path(os.environ[env]))
+    if os.environ.get("HF_HOME"):
+        dirs.append(Path(os.environ["HF_HOME"]) / "hub")
+    p = cfg["features"].get("hf_cache")
+    if p:
+        from .config import REPO_ROOT
+
+        dirs.append(Path(p) if Path(p).is_absolute() else REPO_ROOT / p)
+    dirs.append(Path.home() / ".cache" / "huggingface" / "hub")
+    name = "models--" + str(model_id).replace("/", "--")
+    for d in dirs:
+        ref = d / name / "refs" / "main"
+        try:
+            if ref.is_file():
+                return ref.read_text(encoding="utf-8").strip() or None
+        except OSError:
+            continue
+    return None
+
+
 def _l2(x: np.ndarray) -> np.ndarray:
     x = np.asarray(x, dtype=np.float32)
     return x / np.maximum(np.linalg.norm(x, axis=-1, keepdims=True), 1e-8)

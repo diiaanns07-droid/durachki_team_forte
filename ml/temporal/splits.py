@@ -39,7 +39,8 @@ def grouped_folds(samples: Sequence[Sample], folds: Union[str, int] = "loo",
 
 
 def holdout_split(samples: Sequence[Sample], frac: float, seed: int = 0) -> tuple[list[int], list[int]]:
-    """Нетронутый сгруппированный стратифицированный holdout: (rest_idx, holdout_idx)."""
+    """Отложенные группы (сгруппированно, стратифицированно): (rest_idx, holdout_idx). На уже исследованных
+    роликах это не независимый holdout — только разведочная проверка процедуры подбора."""
     if frac <= 0:
         return list(range(len(samples))), []
     groups: dict[str, list[int]] = {}

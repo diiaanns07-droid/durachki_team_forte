@@ -128,7 +128,8 @@ def nested_cv(samples: Sequence[Sample], bank: TextBank, cfg: dict, kind: str,
     tol = cv.get("hit_tolerances_s", [1, 2, 3])
     sc = scores[pool_mode]
     policies = list(cv.get("timecode_policies", ["peak", "onset"]))
-    peaks = {pol: [timecode(c["t"], c["r"], pol, cfg) if c is not None else None for c in curves] for pol in policies}
+    peaks = {pol: [timecode(c["t"], c["r"], pol, cfg, c.get("change")) if c is not None else None for c in curves]
+             for pol in policies}
     main_pol = str(cfg["infer"].get("timecode_policy", "peak"))
     free = summarize(labels, sc.tolist(), peaks.get(main_pol, peaks[policies[0]]), [s.times for s in samples], tol)
     free["note"] = ("recall_at_fp*/thr_fp* — с «оракульным» порогом по тем же OOF (оптимистично); "

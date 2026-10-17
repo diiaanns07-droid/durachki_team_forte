@@ -115,9 +115,10 @@ cv:
   outer_temporal: 5                # temporal head дороже: по умолчанию 5 фолдов
   inner: 3                         # внутренние фолды для порога
   epochs: 40                       # эпох temporal head в CV
-  holdout_frac: 0.0                # >0: отложить нетронутый сгруппированный holdout (оценивается один раз)
+  holdout_frac: 0.0                # >0: отложить группы (оценка один раз); на 42 уже исследованных роликах это
+                                   # НЕ независимый holdout — только разведочная проверка процедуры
   hit_tolerances_s: [1, 2, 3]
-  timecode_policies: [peak, onset]  # какие политики таймкода мерить в отчёте
+  timecode_policies: [peak, onset, change_onset]  # какие политики таймкода мерить в отчёте
   duration_watchdog_rho: 0.3       # |ρ(скор, длительность)| на чистых роликах выше — предупреждение
   threshold_margin: 0.02           # порог = max(score негативов inner-OOF) + margin (FP=0) / FP≤1
   min_recall_fp0: 0.8
@@ -155,6 +156,10 @@ bench:
   inner: 3
 
 infer:
+  # Нет чекпоинта / несовместимость / ошибка / слишком короткое видео: raise — TemporalUnavailable (стадия temporal
+  # в пайплайне получает status=error с причиной, fusion: degraded; пустой результат не выдаётся за «чисто»);
+  # empty — старое поведение ([], []) + status()
+  on_unavailable: raise
   # Пулинг уровня видео (исправление: max по кадрам смещён в пользу длинных чистых роликов):
   # max — старый (для сравнения) | topk — среднее pool_k лучших окон | topk_null — topk, нормированный по
   # числу окон через null-CDF чистых роликов (подгоняется внутренним CV только на train).

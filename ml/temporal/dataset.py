@@ -128,7 +128,12 @@ def raw_blocks(fs: FeatureSet, bank: TextBank, spec: InputSpec) -> dict[str, np.
     if "emb" in spec.groups:
         blocks["emb"] = emb
     if "change" in spec.groups:  # изменения во времени: лаг-разность и контраст «до/после» по каждому виду
-        blocks["change"] = change_block(fs.times, emb, spec)
+        # не зависит от подгонки (PCA/скейлер) -> считаем один раз на объект признаков, а не в каждом фолде
+        key = ("change", tuple(spec.views), tuple(spec.change_lags_s), tuple(spec.change_deltas_s))
+        cache = fs.__dict__.setdefault("_cache", {})
+        if key not in cache:
+            cache[key] = change_block(fs.times, emb, spec)
+        blocks["change"] = cache[key]
     if "avail" in spec.groups:   # вид известен (1) / неизвестен (0): unknown ≠ «среднее значение»
         blocks["avail"] = np.isfinite(emb[:, :, 0]).astype(np.float32)
     if "dyn" in spec.groups:

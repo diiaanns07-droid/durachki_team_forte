@@ -97,12 +97,14 @@ def stable_hash(obj: Any, n: int = 12) -> str:
 def feature_signature(cfg: dict, backend: str) -> dict:
     """Параметры, от которых зависят кэшированные эмбеддинги изображений."""
     f = cfg["features"]
-    from .features import FEATURE_VERSION
+    from .features import FEATURE_VERSION, hf_revision
 
     return {
         "backend": backend,
         "model_id": f["model_id"] if backend != "mock" else f"mock{f['mock_dim']}",
+        "revision": hf_revision(f["model_id"], cfg) if backend != "mock" else None,  # снапшот весов в HF-кэше
         "focus": f["focus"],
         "zone_views": list(f.get("zone_views") or []),
+        "max_frames": int(f.get("max_frames", 1200)),  # меняет шаг сэмплинга длинных видео
         "v": FEATURE_VERSION,
     }

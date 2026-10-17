@@ -14,14 +14,22 @@ from .conftest import write_video
 cv2 = pytest.importorskip("cv2")
 
 
-def test_score_without_checkpoint_returns_empty(tmp_path, monkeypatch):
+def test_score_without_checkpoint_is_honest(tmp_path, monkeypatch):
+    """Без обученной модели: не случайный score и не «пусто = чисто», а явный статус «не проанализировано»."""
     monkeypatch.setenv("SENTINEL_MOCK", "1")
     import ml.temporal as temporal
 
     clip = SimpleClip(str(write_video(tmp_path / "v.avi")), sample_fps=5.0)
-    risk, events = temporal.score(clip)
-    assert risk == [] and events == []                     # без обученной модели — никакого «случайного» score
-    assert temporal.status()["status"] == "no_checkpoint"
+    with pytest.raises(temporal.TemporalUnavailable) as ei:
+        temporal.score(clip)
+    assert ei.value.reason == "no_checkpoint" and "не означает «нарушений нет»" in str(ei.value)
+    st = temporal.status()
+    assert st["status"] == "no_checkpoint" and st["analyzed"] is False and st["coverage"]["complete"] is False
+    assert temporal.model_info()["status"] == "no_checkpoint"
+    over = tmp_path / "over.yaml"                           # старое поведение — только явно
+    over.write_text("infer:\n  on_unavailable: empty\n", encoding="utf-8")
+    monkeypatch.setenv("SENTINEL_TEMPORAL_CONFIG", str(over))
+    assert temporal.score(clip) == ([], []) and temporal.status()["analyzed"] is False
 
 
 def test_extract_clip_mock_shapes_and_focus(tmp_path):
@@ -97,6 +105,11 @@ def test_end_to_end_extract_cv_train_score(tmp_path, monkeypatch):
 
     assert check_split.main(["--folds", "loo", "3", "--holdout", "0.25"]) == 0
     assert train.main(["--kind", "baseline", "--cv-report", str(out)]) == 0
+    from ml.temporal.config import weights_dir
+
+    tmeta = json.loads((weights_dir(cfg) / "baseline" / "meta.json").read_text(encoding="utf-8"))
+    assert tmeta["reproducibility"]["feature_version"] >= 3 and tmeta["null"] and tmeta["pooling"]["pooling"]
+    assert "inner grouped CV" in tmeta["threshold_source"] and tmeta["type_head_source"] is None
     from ml.temporal import predict
 
     assert predict.main(["--video", str(vids / "X-2.avi"), "--json", str(tmp_path / "pred.json")]) == 0
@@ -119,6 +132,7 @@ def test_end_to_end_extract_cv_train_score(tmp_path, monkeypatch):
     risk2, _ = temporal.score(SimpleClip(str(renamed), sample_fps=5.0))
     assert risk2 == risk
     for e in events:
+        assert e.extra["role"] == "risk_support" and e.extra["standalone_evidence"] is False
         assert e.source == "temporal" and e.t_start <= e.t_peak <= e.t_end
         assert e.type_id == "V99" and e.extra["type_source"] == "none"
         assert e.extra["zero_shot_hint"]["trained"] is False

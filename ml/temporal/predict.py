@@ -20,11 +20,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--json", default=None, help="сохранить полный результат (кривая + события)")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-    from . import score, status
+    from . import TemporalUnavailable, score, status
     from ._video import load_clip
 
     clip = load_clip(a.video, sample_fps=a.sample_fps)
-    risk, events = score(clip, budget_s=a.budget)
+    try:
+        risk, events = score(clip, budget_s=a.budget)
+    except TemporalUnavailable:  # не проанализировано: печатаем честный статус, код возврата 2
+        risk, events = [], []
     st = status()
     out = {"video": Path(a.video).name, "status": st, "risk": risk,
            "events": [dataclasses.asdict(e) for e in events]}

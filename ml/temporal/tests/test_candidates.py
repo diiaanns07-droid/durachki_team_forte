@@ -73,4 +73,6 @@ def test_propose_without_checkpoint_mock(tmp_path, monkeypatch):
     for e in cands:
         assert e.extra["role"] == "candidate" and e.extra["candidate_source"] == "change"
         assert e.type_id == "V99" and e.confidence <= 0.3 + 1e-9 and e.t_start <= e.t_peak <= e.t_end
-    assert temporal.score(clip) == ([], [])               # а вердиктного скора без чекпоинта нет
+    with pytest.raises(temporal.TemporalUnavailable):     # а вердиктного скора без чекпоинта нет — и это не «чисто»
+        temporal.score(clip)
+    assert propose_status()["risk_used"] is False

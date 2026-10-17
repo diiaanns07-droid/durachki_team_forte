@@ -117,7 +117,7 @@ def run_bench(cfg: dict, experiments: Sequence[str], folds: int, repeats: int, i
 
 def latency_probe(videos_dir: str, n: int, cfg: dict) -> dict:
     """Полный путь score()/propose() на реальных роликах (извлечение признаков + модель), с пиком VRAM."""
-    from . import propose, score, status
+    from . import TemporalUnavailable, propose, score, status
     from ._video import load_clip
     from .labels import find_videos
 
@@ -127,7 +127,10 @@ def latency_probe(videos_dir: str, n: int, cfg: dict) -> dict:
         clip = load_clip(str(p), sample_fps=5.0)
         _vram_reset()
         t0 = time.perf_counter()
-        score(clip)
+        try:
+            score(clip)
+        except TemporalUnavailable:  # статус честно попадёт в строку (no_checkpoint и т.п.)
+            pass
         t1 = time.perf_counter()
         propose(clip)
         t2 = time.perf_counter()

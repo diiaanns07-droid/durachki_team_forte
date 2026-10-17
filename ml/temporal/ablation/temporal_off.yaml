@@ -1,0 +1,4 @@
+# Оверлей конфига пайплайна (backend/pipeline, A03) для руки «temporal off» в eval.ablate (A16).
+# Рука «temporal on» — конфиг пайплайна по умолчанию + SENTINEL_TEMPORAL_OOF=1 (cross-fit чекпоинты ml.temporal.oof).
+stages:
+  temporal: false

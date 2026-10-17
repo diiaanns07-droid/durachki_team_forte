@@ -1,6 +1,9 @@
-"""Инференс: score(clip) -> (risk curve 0.5 с, события). Без обученного чекпоинта — ([], []):
-случайный «production score» не отдаём. Тип события — только из головы, обученной на проверенных type_id;
-иначе V99 + zero-shot подсказка в extra (явно помечена как НЕ обученная классификация)."""
+"""Инференс: score(clip) -> (risk curve 0.5 с, события).
+
+Temporal — генератор риска/кандидатов, НЕ самостоятельное доказательство нарушения. Без обученного
+чекпоинта (и при любой невозможности анализа) score() по умолчанию бросает TemporalUnavailable: пайплайн
+записывает стадию как error (fusion: degraded), а пустой результат не выдаётся за «видео чистое».
+Тип события — только из головы, обученной на проверенных type_id; иначе V99 + zero-shot подсказка в extra."""
 from __future__ import annotations
 
 import logging
@@ -12,6 +15,7 @@ from typing import Any, Optional
 import numpy as np
 
 from .config import TYPE_IDS, feature_signature, is_mock, load_config, stable_hash, weights_dir
+from .errors import TemporalUnavailable
 from .features import FeatureSet, cache_path, extract_clip, get_backend, type_scores
 
 try:
@@ -23,23 +27,104 @@ log = logging.getLogger("sentinel.temporal")
 _CK_LOCK = threading.Lock()
 _CK: dict[str, Any] = {}
 _LAST: dict[str, Any] = {}
+CHECKPOINT_FILES = ("meta.json", "spec.npz", "baseline.npz", "temporal.pt", "temporal.json")
 
 
-def _checkpoint(cfg: dict) -> Optional[tuple[Any, Any, dict]]:
+def checkpoint_files(root: Path) -> list[Path]:
+    """Файлы, определяющие поведение чекпоинта: selected.json + файлы всех видов (для штампа и model_info)."""
+    from .predictors import KINDS
+
+    out = [root / "selected.json"]
+    for k in KINDS:
+        out += [root / k / f for f in CHECKPOINT_FILES]
+    return [p for p in out if p.exists()]
+
+
+def _stamp(root: Path) -> tuple:
+    sig = []
+    for p in checkpoint_files(root):
+        try:
+            st = p.stat()
+            sig.append((str(p.relative_to(root)), st.st_size, st.st_mtime_ns))
+        except OSError:
+            continue
+    return (str(root), tuple(sig))
+
+
+def _checkpoint(cfg: dict, root: Optional[Path] = None) -> Optional[tuple[Any, Any, dict]]:
+    """Загруженный чекпоинт; перечитывается при изменении ЛЮБОГО его файла (размер/mtime), а не только selected.json."""
     from .predictors import load_checkpoint
 
-    root = weights_dir(cfg)
-    sel = root / "selected.json"
-    stamp = f"{root}:{sel.stat().st_mtime if sel.exists() else 0}"
+    root = Path(root) if root is not None else weights_dir(cfg)
+    stamp = _stamp(root)
     with _CK_LOCK:
-        if stamp not in _CK:
+        if _CK.get(str(root), (None,))[0] != stamp:
             try:
-                _CK.clear()
-                _CK[stamp] = load_checkpoint(root, cfg)
-            except Exception as e:  # битый/несовместимый чекпоинт — не роняем пайплайн
+                ck = load_checkpoint(root, cfg)
+            except Exception as e:  # битый/несовместимый чекпоинт — честный статус, не падение пайплайна
                 log.warning("temporal: не удалось загрузить чекпоинт из %s: %s", root, e)
-                _CK[stamp] = None
-        return _CK[stamp]
+                ck = None
+            if len(_CK) > 16:  # OOF-режим: по чекпоинту на фолд
+                _CK.clear()
+            _CK[str(root)] = (stamp, ck)
+        return _CK[str(root)][1]
+
+
+def _oof_enabled() -> bool:
+    import os
+
+    return os.environ.get("SENTINEL_TEMPORAL_OOF", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_root(cfg: dict, clip: Any) -> tuple[Optional[Path], Optional[str]]:
+    """Каталог чекпоинта для клипа. Обычный режим — weights/temporal. OOF-режим (только оценка,
+    SENTINEL_TEMPORAL_OOF=1) — чекпоинт фолда, НЕ видевшего группу этого видео (по md5 содержимого)."""
+    root = weights_dir(cfg)
+    if not _oof_enabled():
+        return root, None
+    import json
+
+    from .labels import file_md5
+
+    idx_path = root / "oof" / "index.json"
+    if not idx_path.exists():
+        return None, f"OOF-режим: нет {idx_path} (сначала python -m ml.temporal.oof)"
+    p = Path(str(getattr(clip, "path", "") or ""))
+    if not p.is_file():
+        return None, "OOF-режим: у клипа нет файла для md5"
+    idx = json.loads(idx_path.read_text(encoding="utf-8"))
+    hit = (idx.get("videos") or {}).get(file_md5(p))
+    if not hit:
+        return None, "OOF-режим: видео не участвовало в cross-fit обучении (нет OOF-чекпоинта)"
+    return root / "oof" / str(hit["dir"]), None
+
+
+def model_info() -> dict:
+    """Хук идентичности для кэша пайплайна (backend.pipeline.stages.module_identity): подпись файлов
+    чекпоинта, эффективного конфига и признаков. Без него переобучение не меняет ключ кэша стадии temporal."""
+    from .features import FEATURE_VERSION
+
+    cfg = load_config()
+    root = weights_dir(cfg)
+    oof = _oof_enabled()
+    files = checkpoint_files(root)
+    if oof:
+        oroot = root / "oof"
+        files = ([oroot / "index.json"] if (oroot / "index.json").exists() else []) + \
+            [p for d in sorted(oroot.glob("fold_*")) for p in checkpoint_files(d)]
+    ck = None if oof else _checkpoint(cfg)
+    info: dict[str, Any] = {
+        "checkpoint": [str(p) for p in files],
+        "mode": "oof" if oof else "normal",
+        "status": ("oof" if files else "no_checkpoint") if oof else ("trained" if ck is not None else "no_checkpoint"),
+        "feature_version": FEATURE_VERSION,
+        "config_hash": stable_hash(cfg, 16),
+        "mock": is_mock(),
+    }
+    if ck is not None:
+        info.update(kind=ck[0].kind, threshold=ck[2].get("threshold"), created=ck[2].get("created"),
+                    feature_signature=ck[2].get("feature_signature"))
+    return info
 
 
 def status() -> dict:
@@ -108,17 +193,22 @@ def score(clip: Any, zones: Any = None, budget_s: Optional[float] = None
     cfg = load_config()
     inf = cfg["infer"]
     _LAST.clear()
-    ck = _checkpoint(cfg)
+    root, why = _resolve_root(cfg, clip)
+    if root is None:
+        return _unavailable(cfg, "oof_unavailable", why or "OOF-чекпоинт недоступен")
+    ck = _checkpoint(cfg, root)
     if ck is None:
-        _LAST.update(status="no_checkpoint", warning=f"нет обученной модели в {weights_dir(cfg)} — temporal пропущен")
-        log.warning("temporal: %s", _LAST["warning"])
-        return [], []
+        return _unavailable(cfg, "no_checkpoint", f"нет обученной модели в {root}")
     model, spec, meta = ck
     if (spec.backend == "mock") != is_mock():
-        _LAST.update(status="backend_mismatch",
-                     warning=f"чекпоинт обучен на признаках '{spec.backend}', а режим mock={is_mock()}")
-        log.warning("temporal: %s", _LAST["warning"])
-        return [], []
+        return _unavailable(cfg, "backend_mismatch",
+                            f"чекпоинт обучен на признаках '{spec.backend}', а режим mock={is_mock()}")
+    want = meta.get("feature_signature")
+    have = stable_hash(feature_signature(cfg, spec.backend), 16)
+    if want and want != have:
+        return _unavailable(cfg, "checkpoint_mismatch",
+                            "чекпоинт обучен на других признаках (модель/ревизия/версия извлечения/настройки) — "
+                            "нужно переобучить: python -m ml.temporal.train")
     try:
         from .data_index import bank_from_meta
 
@@ -126,16 +216,14 @@ def score(clip: Any, zones: Any = None, budget_s: Optional[float] = None
         bank = bank_from_meta(cfg, meta, backend)
         fs = _features(clip, cfg, backend, spec, zones, budget_s, t0)
         if len(fs) < int(inf.get("min_frames", 4)):
-            _LAST.update(status="too_short", n=len(fs))
-            return [], []
+            return _unavailable(cfg, "too_short", f"слишком мало кадров для временной модели: {len(fs)}")
         from .dataset import build_inputs
 
         X, grid = build_inputs(fs, bank, spec)
         probs, tprobs = model.predict(X, spec.fps)
-    except Exception as e:  # graceful: временная модель не должна ронять пайплайн
-        _LAST.update(status="error", warning=f"temporal: {type(e).__name__}: {e}")
+    except Exception as e:  # пайплайн ловит исключение стадии сам; здесь — честный статус и причина
         log.exception("temporal: ошибка инференса")
-        return [], []
+        return _unavailable(cfg, "error", f"{type(e).__name__}: {e}", cause=e)
 
     duration = float(getattr(clip, "duration", 0.0) or grid[-1])
     # пулинг/шаг — как при калибровке чекпоинта (null-CDF и порог подобраны именно для них)
@@ -153,12 +241,25 @@ def score(clip: Any, zones: Any = None, budget_s: Optional[float] = None
             pk["confidence"] = vscore * pk["peak"] / max(rmax, 1e-9)
             pk["t_peak"] = _apply_policy(t_curve, r_curve, pk, pcfg)
             events.append(_make_event(pk, model, meta, grid, tprobs, fs, zs, zs_keys, bank))
-    _LAST.update(coverage=_coverage(fs, duration))
+    _LAST.update(coverage=_coverage(fs, duration), analyzed=True, checkpoint_dir=str(root))
     _LAST.update(status="ok", kind=model.kind, threshold=thr, n_events=len(events), video_score=round(vscore, 4),
                  pooling=pcfg["infer"].get("pooling"), max_risk=float(r_curve.max()) if len(r_curve) else 0.0,
                  elapsed_s=round(time.monotonic() - t0, 3), n_frames=len(fs), fps=fs.meta.get("fps"),
                  views=fs.views, truncated_at=fs.meta.get("truncated_at"))
     return [(round(float(t), 2), round(float(r), 4)) for t, r in zip(t_curve, r_curve)], events
+
+
+def _unavailable(cfg: dict, reason: str, message: str, cause: Optional[BaseException] = None
+                 ) -> tuple[list, list]:
+    """Честный статус «не проанализировано». По умолчанию (infer.on_unavailable=raise) — исключение:
+    стадия temporal в пайплайне получает status=error с причиной; empty — старое поведение ([], [])."""
+    msg = f"ml.temporal: {message} — временная модель не выполнялась; пустой результат не означает «нарушений нет»"
+    _LAST.update(status=reason, analyzed=False, warning=msg,
+                 coverage={"analyzed_until_s": 0.0, "fraction": 0.0, "complete": False, "reason": reason})
+    log.warning("temporal: %s", msg)
+    if str(cfg["infer"].get("on_unavailable", "raise")) == "raise":
+        raise TemporalUnavailable(reason, msg) from cause
+    return [], []
 
 
 def _coverage(fs: FeatureSet, duration: float) -> dict:
@@ -193,7 +294,8 @@ def _make_event(pk: dict, model: Any, meta: dict, grid: np.ndarray, tprobs: Opti
     tp, a, b = pk["t_peak"], pk["t_start"], pk["t_end"]
     extra: dict[str, Any] = {"kind": model.kind, "peak_risk": round(pk["peak"], 4),
                              "threshold": meta.get("threshold"), "model_created": meta.get("created"),
-                             "timecode_policy": cfg_policy(meta)}
+                             "timecode_policy": cfg_policy(meta),
+                             "role": "risk_support", "standalone_evidence": False}
     type_id = "V99"
     if tprobs is not None and getattr(model, "type_trained", False):
         tp_mean = tprobs[_window(grid, tp, 1.5)].mean(axis=0)
@@ -252,16 +354,21 @@ def propose(clip: Any, zones: Any = None, budget_s: Optional[float] = None, n_ma
     cfg = load_config()
     inf = cfg["infer"]
     _LAST_PROPOSE.clear()
-    ck = _checkpoint(cfg)
-    warn = None
+    root, why = _resolve_root(cfg, clip)
+    ck = _checkpoint(cfg, root) if root is not None else None
+    warn = why
     if ck is not None and (ck[1].backend == "mock") != is_mock():
         warn, ck = f"чекпоинт на признаках '{ck[1].backend}' не подходит к режиму mock={is_mock()}", None
+    if ck is not None and ck[2].get("feature_signature") and \
+            ck[2]["feature_signature"] != stable_hash(feature_signature(cfg, ck[1].backend), 16):
+        warn, ck = "чекпоинт обучен на других признаках — риск не используется, только кривая изменений", None
     model, spec, meta = ck if ck is not None else (None, None, {})
     try:
         backend = get_backend(cfg, force=spec.backend if spec is not None else None)
         fs = _features(clip, cfg, backend, spec, zones, budget_s, t0)
         if len(fs) < int(inf.get("min_frames", 4)):
-            _LAST_PROPOSE.update(status="too_short", n=len(fs))
+            _LAST_PROPOSE.update(status="too_short", n=len(fs), analyzed=False,
+                                 coverage={"fraction": 0.0, "complete": False, "reason": "too_short"})
             return []
         duration = float(getattr(clip, "duration", 0.0) or fs.times[-1])
         step = float(inf.get("risk_step_s", 0.5))
@@ -285,7 +392,8 @@ def propose(clip: Any, zones: Any = None, budget_s: Optional[float] = None, n_ma
             bank = get_text_bank(cfg, backend)
         zs, zs_keys = type_scores(fs, bank)
     except Exception as e:  # graceful: генератор кандидатов не должен ронять пайплайн
-        _LAST_PROPOSE.update(status="error", warning=f"temporal.propose: {type(e).__name__}: {e}")
+        _LAST_PROPOSE.update(status="error", warning=f"temporal.propose: {type(e).__name__}: {e}", analyzed=False,
+                             coverage={"fraction": 0.0, "complete": False, "reason": "error"})
         log.exception("temporal: ошибка propose")
         return []
     pw = float(cfg.get("propose", {}).get("window_s", 2.0))
@@ -316,7 +424,8 @@ def propose(clip: Any, zones: Any = None, budget_s: Optional[float] = None, n_ma
         events.append(Event(type_id="V99", t_start=round(max(0.0, t - pw), 2), t_end=round(min(duration, t + pw), 2),
                             t_peak=round(t, 2), confidence=round(float(c["salience"]), 4), source="temporal",
                             facts=[fact], bboxes=bboxes, extra=extra))
-    _LAST_PROPOSE.update(coverage=_coverage(fs, duration))
+    _LAST_PROPOSE.update(coverage=_coverage(fs, duration), analyzed=True,
+                         risk_used=model is not None)  # без чекпоинта — только кривая изменений, не риск
     _LAST_PROPOSE.update(status="ok", n=len(events), checkpoint=model is not None, warning=warn,
                          elapsed_s=round(time.monotonic() - t0, 3), n_frames=len(fs), views=fs.views)
     return events
