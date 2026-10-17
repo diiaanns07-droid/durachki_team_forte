@@ -3,6 +3,7 @@
     python datasets/det/ls_project.py start      # сервер на http://localhost:8080 (держать окно открытым)
     python datasets/det/ls_project.py setup      # во втором окне: проект + локальное хранилище + импорт tasks_new.json
     python datasets/det/ls_project.py export     # JSON из Label Studio → export_coco.py → datasets/det/annotations.json
+    python datasets/det/ls_project.py tabs       # вкладки «Val» (проверить первыми) и «Train» по split.json
     python datasets/det/ls_project.py config     # напечатать XML-конфиг разметки (для ручной настройки)
 
 Label Studio стоит в отдельном venv datasets/det/.venv-ls (у него жёсткие пины зависимостей).
@@ -162,6 +163,46 @@ def cmd_setup(args) -> int:
     return 0
 
 
+TABS = [("1 · Val — проверить первыми (честная метрика)", "val"), ("2 · Train — для дообучения", "train")]
+
+
+def all_tasks(api: Api, pid: int) -> list[dict]:
+    page, tasks = 1, []
+    while True:
+        r = api("GET", f"/api/tasks?project={pid}&page={page}&page_size=500&fields=all")
+        batch = r.get("tasks", []) if isinstance(r, dict) else r
+        tasks += batch
+        if len(batch) < 500:
+            return tasks
+        page += 1
+
+
+def cmd_tabs(args) -> int:
+    """Сплит из split.json → data.split у задач + вкладки Val/Train: val проверяется первым — по нему метрика."""
+    api = api_from(args)
+    pid = project_id(api)
+    if pid is None:
+        raise SystemExit("проект не найден — сначала `ls_project.py setup`")
+    split_p = DET_DIR / "split.json"
+    if not split_p.is_file():
+        raise SystemExit("нет datasets/det/split.json — сначала export (или apply_review.py --coco)")
+    split = json.loads(split_p.read_text(encoding="utf-8"))["groups"]
+    n = 0
+    for t in all_tasks(api, pid):
+        s = split.get(t["data"].get("group") or t["data"].get("video_id"))
+        if s and t["data"].get("split") != s:
+            api("PATCH", f"/api/tasks/{t['id']}", {"data": {**t["data"], "split": s}})
+            n += 1
+    have = {v["data"].get("title") for v in api("GET", f"/api/dm/views?project={pid}")}
+    for title, value in TABS:
+        if title not in have:
+            api("POST", "/api/dm/views", {"project": pid, "data": {"title": title, "filters": {
+                "conjunction": "and",
+                "items": [{"filter": "filter:tasks:data.split", "operator": "equal", "type": "String", "value": value}]}}})
+    print(f"сплит проставлен у {n} задач; вкладки: {', '.join(t for t, _ in TABS)}")
+    return 0
+
+
 def cmd_export(args) -> int:
     api = api_from(args)
     pid = project_id(api)
@@ -187,6 +228,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--tasks", type=Path, default=LS_DIR / "tasks_new.json")
     sub.add_parser("export", help="лишние аргументы уходят в export_coco.py (--val-frac, --val, --resplit, --out-dir)")
     sub.add_parser("config")
+    sub.add_parser("tabs", help="вкладки Val/Train в Label Studio по split.json")
     args, rest = ap.parse_known_args(argv)
     if rest and args.cmd != "export":
         ap.error(f"неизвестные аргументы: {' '.join(rest)}")
@@ -194,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "config":
         print(label_config())
         return 0
-    return {"start": cmd_start, "setup": cmd_setup, "export": cmd_export}[args.cmd](args)
+    return {"start": cmd_start, "setup": cmd_setup, "export": cmd_export, "tabs": cmd_tabs}[args.cmd](args)
 
 
 if __name__ == "__main__":
