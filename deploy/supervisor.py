@@ -27,6 +27,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -51,9 +52,60 @@ OFFLINE_ENV = {"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "HF_DATASETS_
 
 
 # ----------------------------------------------------------------------------- процессы
+def _win_create_time(pid: int) -> Optional[float]:  # pragma: no cover - Windows без psutil
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    k32.GetProcessTimes.argtypes = (wintypes.HANDLE,) + (ctypes.POINTER(ctypes.c_ulonglong),) * 4
+    k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    h = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return None
+    try:
+        t = [ctypes.c_ulonglong() for _ in range(4)]
+        if not k32.GetProcessTimes(h, *(ctypes.byref(x) for x in t)):
+            return None
+        return t[0].value / 1e7 - 11644473600.0  # FILETIME (100 нс с 1601) → epoch, как psutil
+    finally:
+        k32.CloseHandle(h)
+
+
+def _win_ppids() -> dict[int, int]:  # pragma: no cover - Windows без psutil
+    """PID → PPID всех процессов (Toolhelp32)."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Entry(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD),
+                    ("cntThreads", wintypes.DWORD), ("th32ParentProcessID", wintypes.DWORD),
+                    ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD), ("szExeFile", wintypes.WCHAR * 260)]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    k32.CreateToolhelp32Snapshot.argtypes = (wintypes.DWORD, wintypes.DWORD)
+    k32.Process32FirstW.argtypes = k32.Process32NextW.argtypes = (wintypes.HANDLE, ctypes.POINTER(Entry))
+    k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    snap = k32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if not snap or snap == wintypes.HANDLE(-1).value:
+        return {}
+    out, e = {}, Entry()
+    e.dwSize = ctypes.sizeof(Entry)
+    try:
+        ok = k32.Process32FirstW(snap, ctypes.byref(e))
+        while ok:
+            out[int(e.th32ProcessID)] = int(e.th32ParentProcessID)
+            ok = k32.Process32NextW(snap, ctypes.byref(e))
+    finally:
+        k32.CloseHandle(snap)
+    return out
+
+
 def create_time(pid: int) -> Optional[float]:
     if psutil is None:
-        return None
+        return _win_create_time(pid) if IS_WIN else None
     try:
         return psutil.Process(pid).create_time()
     except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -129,9 +181,22 @@ def kill_tree(pid: int, timeout: float = 15.0) -> None:
 
 
 def descendants(pid: int) -> dict[int, Optional[float]]:
-    """PID → время старта всех потомков (spawn-воркер A03 — потомок uvicorn). Без psutil — пусто."""
+    """PID → время старта всех потомков (spawn-воркер A03 — потомок uvicorn). Без psutil: Windows — Toolhelp32,
+    иначе пусто (POSIX добивает группу процессов)."""
     if psutil is None:
-        return {}
+        if not IS_WIN:
+            return {}
+        ppids, out, todo = _win_ppids(), {}, [(pid, create_time(pid))]  # pragma: no cover
+        while todo:  # pragma: no cover
+            parent, pct = todo.pop()
+            for c, pp in ppids.items():
+                if pp == parent and c not in out and c != pid:
+                    ct = create_time(c)
+                    if ct is not None and pct is not None and ct < pct:
+                        continue  # PPID указывает на переиспользованный PID: «ребёнок» старше родителя — чужой
+                    out[c] = ct
+                    todo.append((c, ct))
+        return out
     try:
         return {c.pid: c.create_time() for c in psutil.Process(pid).children(recursive=True)}
     except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -157,6 +222,83 @@ def reap(pids: dict[int, Optional[float]], pgid: Optional[int] = None, timeout: 
     while time.time() < end and any(is_ours({"pid": x, "create_time": c}) for x, c in pids.items()):
         time.sleep(0.1)
     return [x for x, c in pids.items() if is_ours({"pid": x, "create_time": c})]
+
+
+class WinJob:
+    """Windows Job Object: аналог killpg. Потомки api (spawn-воркер A03) попадают в job автоматически,
+    даже если промежуточный родитель (venv-лаунчер python.exe) уже умер. KILL_ON_JOB_CLOSE — при смерти
+    супервизора ОС сама добивает дерево, VRAM не остаётся занятой. Только ctypes, без pywin32 и psutil."""
+    KILL_ON_JOB_CLOSE = 0x2000
+    EXTENDED_LIMIT_INFORMATION = 9
+
+    def __init__(self) -> None:
+        import ctypes
+        from ctypes import wintypes
+        self.k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.k32.CreateJobObjectW.restype = wintypes.HANDLE
+        self.k32.CreateJobObjectW.argtypes = (wintypes.LPVOID, wintypes.LPCWSTR)
+        self.k32.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD)
+        self.k32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+        self.k32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+        self.k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        self.handle = self.k32.CreateJobObjectW(None, None)
+        if not self.handle:
+            raise OSError(ctypes.get_last_error(), "CreateJobObjectW")
+
+        class IoCounters(ctypes.Structure):
+            _fields_ = [(n, ctypes.c_ulonglong) for n in ("r_ops", "w_ops", "o_ops", "r_bytes", "w_bytes", "o_bytes")]
+
+        class BasicLimit(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_longlong), ("PerJobUserTimeLimit", ctypes.c_longlong),
+                        ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+        class ExtendedLimit(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", BasicLimit), ("IoInfo", IoCounters),
+                        ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        info = ExtendedLimit()
+        info.BasicLimitInformation.LimitFlags = self.KILL_ON_JOB_CLOSE
+        if not self.k32.SetInformationJobObject(self.handle, self.EXTENDED_LIMIT_INFORMATION,
+                                                ctypes.byref(info), ctypes.sizeof(info)):
+            err = ctypes.get_last_error()
+            self.close()
+            raise OSError(err, "SetInformationJobObject")
+
+    def assign(self, p: subprocess.Popen) -> bool:
+        return bool(self.handle) and bool(self.k32.AssignProcessToJobObject(self.handle, int(p._handle)))  # type: ignore[attr-defined]
+
+    def terminate(self) -> None:
+        if self.handle:
+            self.k32.TerminateJobObject(self.handle, 1)
+
+    def close(self) -> None:
+        if self.handle:
+            self.k32.CloseHandle(self.handle)
+            self.handle = None
+
+
+def _resume(p: subprocess.Popen) -> None:
+    """Снять CREATE_SUSPENDED: процесс попал в job до того, как успел породить детей."""
+    import ctypes
+    ntdll = ctypes.WinDLL("ntdll")
+    ntdll.NtResumeProcess.argtypes = (ctypes.c_void_p,)
+    ntdll.NtResumeProcess(int(p._handle))  # type: ignore[attr-defined]
+
+
+def bypass_venv_launcher(cmd: list[str], env: dict[str, str]) -> list[str]:
+    """Windows venv: Scripts/python.exe — лаунчер, он кладёт интерпретатор в СВОЙ job с SILENT_BREAKAWAY_OK,
+    и внуки (spawn-воркер A03) выпадают из нашего job. Как multiprocessing (bpo-35797): запускаем базовый
+    python напрямую, venv передаём через __PYVENV_LAUNCHER__."""
+    base = getattr(sys, "_base_executable", sys.executable)
+    same = lambda a, b: os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))  # noqa: E731
+    if cmd and sys.prefix != sys.base_prefix and not same(base, sys.executable) and same(cmd[0], sys.executable):
+        env["__PYVENV_LAUNCHER__"] = sys.executable
+        return [base, *cmd[1:]]
+    return cmd
 
 
 def gpu_pids() -> Optional[set[int]]:
@@ -234,7 +376,14 @@ class Store:
         self.dir.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(st, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        os.replace(tmp, self.path)
+        for attempt in range(50):  # Windows: replace падает (WinError 5), пока читатель (status, тест) держит файл
+            try:
+                os.replace(tmp, self.path)
+                return
+            except PermissionError:
+                if not IS_WIN or attempt == 49:
+                    raise
+                time.sleep(0.02)
 
 
 def _now() -> str:
@@ -299,9 +448,13 @@ class Supervisor:
         self.netguard = str(self.env.get("SENTINEL_NETGUARD") or svc.get("netguard", "log"))
         self.app = str(args.app or svc.get("app", "backend.api.main:app"))
         self.api: Optional[subprocess.Popen] = None
+        self.api_job: Optional[WinJob] = None  # Windows: всё дерево api (аналог pgid на POSIX)
         self.tunnel: Optional[subprocess.Popen] = None
         self.restarts: collections.deque[float] = collections.deque()
-        self.tree: dict[int, Optional[float]] = {}  # потомки текущего api (snapshot каждый виток)
+        self.tree: dict[int, Optional[float]] = {}  # потомки текущего api (snapshot каждый виток + watcher)
+        self.tree_lock = threading.Lock()
+        self.tree_saved: set[int] = set()
+        self.watch_stop = threading.Event()
         self.st: dict[str, Any] = {}
 
     # ---- окружение детей
@@ -320,17 +473,28 @@ class Supervisor:
         env["PYTHONPATH"] = os.pathsep.join(pp)
         return env
 
-    def _popen(self, cmd: list[str], name: str, env: dict[str, str]) -> subprocess.Popen:
+    def _popen(self, cmd: list[str], name: str, env: dict[str, str], job: Optional["WinJob"] = None) -> subprocess.Popen:
         self.logs.mkdir(parents=True, exist_ok=True)
         out = open(self.logs / f"{name}.out.log", "ab")
         err = open(self.logs / f"{name}.err.log", "ab")
         kw: dict[str, Any] = {"stdout": out, "stderr": err, "stdin": subprocess.DEVNULL, "cwd": str(REPO_ROOT), "env": env}
         if IS_WIN:  # pragma: no cover
             kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            if job is not None:  # в job до первой инструкции: иначе ребёнок успеет породить внука вне job
+                kw["creationflags"] |= 0x4  # CREATE_SUSPENDED
+                env = kw["env"] = dict(env)
+                cmd = bypass_venv_launcher(cmd, env)
         else:
             kw["start_new_session"] = True
         try:
-            return subprocess.Popen(cmd, **kw)
+            p = subprocess.Popen(cmd, **kw)
+            if IS_WIN and job is not None:  # pragma: no cover
+                try:
+                    if not job.assign(p):
+                        self.log(f"WARN AssignProcessToJobObject не удался для pid={p.pid}")
+                finally:
+                    _resume(p)
+            return p
         finally:
             out.close()
             err.close()
@@ -364,8 +528,13 @@ class Supervisor:
                 self.log(f"ERROR порт {self.port} занят, второй сервер не запускаем")
                 return False
             time.sleep(0.5)
-        self.api = self._popen(self.api_cmd(), "api", self.child_env())
-        self.tree = {}
+        self.api_job = None
+        if IS_WIN:  # pragma: no cover
+            try:
+                self.api_job = WinJob()
+            except OSError as e:
+                self.log(f"WARN Job Object недоступен ({e}) — потомков api добиваем только по snapshot")
+        self.api = self._popen(self.api_cmd(), "api", self.child_env(), job=self.api_job)
         self.save(api=self._rec(self.api, cmd=self.app), phase="starting", api_started=time.time(), api_tree=[])
         self.log(f"api pid={self.api.pid} {self.app} на {self.host}:{self.port}")
         return True
@@ -383,19 +552,44 @@ class Supervisor:
         if p is not None and p is self.api:
             self.reap_api_tree()
 
+    def _grab_tree(self) -> None:
+        api = self.api
+        if api is not None and api.poll() is None:
+            fresh = descendants(api.pid)
+            if fresh:
+                with self.tree_lock:
+                    self.tree.update(fresh)
+
+    def _watch_tree(self, period: float = 0.1) -> None:
+        """Windows: killpg нет, а Job Object ловит не всё (дети Store-Python выходят из job) — фоновый snapshot
+        каждые 100 мс, независимо от блокирующих check_ready (~2 с на отказ соединения)."""
+        while not self.watch_stop.wait(period):
+            try:
+                self._grab_tree()
+            except Exception:  # noqa: BLE001 - наблюдатель не должен ронять супервизор
+                pass
+
     def snapshot_tree(self) -> None:
-        if self.api is not None and self.api.poll() is None:
-            fresh = descendants(self.api.pid)
-            if set(fresh) - set(self.tree):
-                self.tree.update(fresh)
-                self.save(api_tree=[{"pid": k, "create_time": v} for k, v in self.tree.items()])
+        self._grab_tree()
+        with self.tree_lock:
+            tree = dict(self.tree)
+        if set(tree) - self.tree_saved:
+            self.tree_saved = set(tree)
+            self.save(api_tree=[{"pid": k, "create_time": v} for k, v in tree.items()])
 
     def reap_api_tree(self) -> None:
         """После выхода/убийства api: добить его потомков (GPU-воркер A03) и проверить, что GPU освобождён."""
         if self.api is None:
             return
-        left = reap(self.tree, pgid=self.api.pid)
-        ours = set(self.tree) | {self.api.pid}
+        if self.api_job is not None:  # pragma: no cover - Windows: в job только наше дерево api
+            self.api_job.terminate()
+            self.api_job.close()
+            self.api_job = None
+        with self.tree_lock:
+            tree, self.tree = self.tree, {}
+        self.tree_saved = set()
+        left = reap(tree, pgid=self.api.pid)
+        ours = set(tree) | {self.api.pid}
         on_gpu = gpu_pids()
         still = sorted((on_gpu or set()) & ours)
         if left:
@@ -403,7 +597,6 @@ class Supervisor:
         if still:
             self.log(f"ERROR GPU всё ещё держат наши процессы {still}")
         self.save(gpu_released=None if on_gpu is None else not still, orphans_left=left, api_tree=[])
-        self.tree = {}
 
     # ---- tunnel
     def tunnel_cmd(self) -> list[str]:
@@ -492,6 +685,8 @@ class Supervisor:
                        "tunnel_mode": self.tunnel_mode, "netguard": self.netguard, "restarts": 0, "last_error": None}
             self.save()
             keep_awake(True)
+            if IS_WIN:  # pragma: no cover
+                threading.Thread(target=self._watch_tree, name="tree-watch", daemon=True).start()
             if port_busy("127.0.0.1", self.port):
                 self.save(phase="failed", last_error=f"порт {self.port} уже занят чужим процессом")
                 self.log(f"ERROR порт {self.port} занят — сервис не запускаю, чужой процесс не трогаю")
@@ -502,6 +697,7 @@ class Supervisor:
         finally:
             self.stop_proc(self.tunnel)
             self.stop_proc(self.api)
+            self.watch_stop.set()
             keep_awake(False)
             if self.st:
                 self.save(phase=self.st.get("phase") if self.st.get("phase") in ("crash_loop", "failed")

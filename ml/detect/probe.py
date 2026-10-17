@@ -107,7 +107,7 @@ def _load_frames(a: argparse.Namespace) -> list[tuple[str, np.ndarray]]:
         for p in list_images(a.frames):
             img = cv2.imread(str(p))
             if img is not None:
-                items.append((str(p.relative_to(a.frames)).replace("/", "__").rsplit(".", 1)[0], img))
+                items.append((p.relative_to(a.frames).as_posix().replace("/", "__").rsplit(".", 1)[0], img))
     return items[: a.limit] if a.limit else items
 
 

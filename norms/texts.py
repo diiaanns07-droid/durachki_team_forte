@@ -98,7 +98,7 @@ def load_git_ref(ref: str, subdir: str = "norms_fetched", catalog: Optional[dict
     """Читает файлы ``<ref>:<subdir>/**`` через git (ветку не нужно checkout'ить)."""
     cwd = str(repo or NORMS_DIR.parent)
     ls = subprocess.run(["git", "ls-tree", "-r", "--name-only", ref, "--", subdir],
-                        cwd=cwd, capture_output=True, text=True)
+                        cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if ls.returncode != 0:
         raise FileNotFoundError(f"git ref {ref!r} недоступен: {ls.stderr.strip()}")
     index = _doc_index(catalog)
@@ -107,7 +107,7 @@ def load_git_ref(ref: str, subdir: str = "norms_fetched", catalog: Optional[dict
         if not name.lower().endswith(TEXT_SUFFIXES):
             continue
         raw = subprocess.run(["git", "show", f"{ref}:{name}"], cwd=cwd, capture_output=True,
-                             text=True, check=True).stdout
+                             text=True, encoding="utf-8", errors="replace", check=True).stdout
         text, meta = _to_text(name, raw)
         doc_id, url = _identify(name, text, index)
         docs.append(DocText(doc_id, meta.get("url") or url, f"{ref}:{name}", text, meta))

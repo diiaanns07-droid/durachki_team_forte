@@ -325,7 +325,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             rp = d / "report.html"
             rp.write_text(build_report(read_json(d / "metrics.json"), load_predictions(d / "preds")[0],
                                        title=f"{args.name}: {arm}", sanity=cmp.get("sanity")), encoding="utf-8")
-            arm_reports[arm] = str(rp.resolve().relative_to(out.resolve())) if rp.resolve().is_relative_to(
+            arm_reports[arm] = rp.resolve().relative_to(out.resolve()).as_posix() if rp.resolve().is_relative_to(
                 out.resolve()) else rp.resolve().as_uri()
         (out / "compare.html").write_text(compare_html(cmp, arm_reports), encoding="utf-8")
     except Exception as e:  # noqa: BLE001 — отчёт не должен ронять замер

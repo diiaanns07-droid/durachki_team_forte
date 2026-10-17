@@ -116,7 +116,7 @@ def _smoke(tmp_path, fake_dir, video, extra_env=None):
     r = subprocess.run([sys.executable, str(ROOT / "deploy" / "offline_worker_smoke.py"), "--video", str(video),
                         "--allow-empty-lock", "--report", str(report)], env=env, capture_output=True, text=True,
                        timeout=120)
-    return r, (json.loads(report.read_text()) if report.exists() else None)
+    return r, (json.loads(report.read_text(encoding="utf-8")) if report.exists() else None)
 
 
 def test_offline_smoke_passes_with_local_worker(tmp_path, fake_backend):

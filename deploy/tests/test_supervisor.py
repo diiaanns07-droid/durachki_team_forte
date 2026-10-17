@@ -44,7 +44,7 @@ def _wait(pred, timeout=40.0, step=0.2):
 
 def _state(tmp_path):
     try:
-        return json.loads((tmp_path / "logs/state/state.json").read_text())
+        return json.loads((tmp_path / "logs/state/state.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 
@@ -63,12 +63,12 @@ def test_full_cycle_single_instance_and_stop(tmp_path, hide_psutil):
     p = subprocess.Popen(SUP + args, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
         st = _wait(lambda: (s := _state(tmp_path)) and (s.get("tunnel") or {}).get("url") and s)
-        assert st, (p.poll(), (tmp_path / "logs/supervisor.log").read_text() if (tmp_path / "logs/supervisor.log").exists() else "")
+        assert st, (p.poll(), (tmp_path / "logs/supervisor.log").read_text(encoding="utf-8") if (tmp_path / "logs/supervisor.log").exists() else "")
         assert st["phase"] == "ready" and st["tunnel"]["url"] == "https://abc-def-1.trycloudflare.com"
         assert (tmp_path / "logs/public_url.txt").read_text().strip() == st["tunnel"]["url"]
-        ready = json.loads((tmp_path / "logs/ready.json").read_text())
+        ready = json.loads((tmp_path / "logs/ready.json").read_text(encoding="utf-8"))
         assert ready["ok"] and ready["no_key_status"] == 401
-        assert "k1-test-key" not in (tmp_path / "logs/supervisor.log").read_text()  # ключ не логируется
+        assert "k1-test-key" not in (tmp_path / "logs/supervisor.log").read_text(encoding="utf-8")  # ключ не логируется
         r = subprocess.run(SUP + ["status", "--json"], env=env, capture_output=True, text=True, timeout=30)
         assert r.returncode == 0 and json.loads(r.stdout)["ok"]
         second = subprocess.run(SUP + args, env=env, capture_output=True, text=True, timeout=30)

@@ -171,6 +171,9 @@ def gpu_evidence() -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):  # консоль Windows (cp1252/cp866) без PYTHONUTF8 падает на «≠» и кириллице
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--video", type=Path, default=None, help="по умолчанию — синтетическое")
     ap.add_argument("--seconds", type=float, default=20.0, help="длина синтетического видео")

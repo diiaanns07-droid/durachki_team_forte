@@ -2,6 +2,8 @@ import stat
 import sys
 from pathlib import Path
 
+import pytest
+
 from deploy import merge_requirements as mr
 
 
@@ -97,6 +99,7 @@ def test_satisfiable_helpers():
     assert mr.satisfiable([])
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="фейковый uv — скрипт с shebang, на Windows не исполняется")
 def test_lock_calls_real_resolver_with_platform(tmp_path):
     fake_uv = tmp_path / "uv"
     log = tmp_path / "args.txt"
@@ -142,6 +145,7 @@ def _fake_uv(tmp_path, body: str, code: int = 0):
     return str(uv)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="фейковый uv — скрипт с shebang, на Windows не исполняется")
 def test_resolve_check_detects_drift_and_extras(tmp_path):
     lock = tmp_path / "l1.lock.txt"
     lock.write_text("torch==2.11.0+cu128\npillow==13.0.0\nnumpy==2.4.6\n")
