@@ -82,6 +82,7 @@ def make_zones() -> list[Any]:
         Zone(name="desk", polygon=[(0.2, 0.55), (0.8, 0.55), (0.8, 0.75), (0.2, 0.75)]),
         Zone(name="safe", polygon=[(0.8, 0.8), (1.0, 0.8), (1.0, 1.0), (0.8, 1.0)]),
         Zone(name="door", polygon=[(0.0, 0.0), (0.3, 0.0), (0.3, 0.2), (0.0, 0.2)]),
+        Zone(name="client_area", polygon=[(0.3, 0.0), (1.0, 0.0), (1.0, 0.38), (0.3, 0.38)]),
     ]
 
 

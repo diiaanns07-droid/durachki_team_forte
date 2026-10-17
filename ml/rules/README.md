@@ -48,7 +48,7 @@
 ### Решения (записаны здесь по требованию фазы 2)
 
 1. **Каждое изменение — гипотеза за флагом, по умолчанию выключена.** Новые правила лежат в `rules.yaml`
-   с `enabled: false`, а гипотезы `H0..H9` (раздел `hypotheses`) — это наборы переопределений. Профиль
+   с `enabled: false`, а гипотезы `H0..H10` (раздел `hypotheses`) — это наборы переопределений. Профиль
    по умолчанию — `baseline`, он повторяет поведение фазы 1. Профиль `phase2` — все гипотезы сразу.
    Production сам профиль не меняет: только явный аргумент, переменная `SENTINEL_RULES_PROFILE` или
    `default_profile` в YAML. В профиль по умолчанию гипотеза попадает только после замера L2.
@@ -139,6 +139,64 @@ python -m ml.rules.replay --cache cache/ --labels data/labels.csv --names out/su
 2. `rules.V02_left_cash_after_departure.min_duration_s` (3 с) — сколько длится «ушла и оставила»,
    прежде чем это событие, а не шаг в сторону.
 
+## Границы A08 → A09 → A12 (проверено на `claude/integration-cloud` 2055fc4)
+
+**Вход от A08.** `SceneStateEx`: значение сигнала берётся, только если `known[name]` истинно (или
+`conf ≥ known_min_conf`). Prior в `signals` при `known=False` — «не видно», а не факт. `observed.*`
+односторонние; `quality` → `frame_quality`. Проверено тестом с настоящим `ml.scene.types` (roundtrip
+`state_to_dict` → `state_from_dict`).
+
+**Выход для A12** (`Event.extra`; сверено с `ml/fusion/core.py`, `policies.py`, `evidence.py`):
+
+| Поле | Смысл | Как читает A12 |
+|---|---|---|
+| `assessment` + `assessment_reasons` | `candidate_violation` / `review_observation` / `insufficient_context`. Причина «нет проверенной … нормы» содержит «норм»; у правила-наблюдения причина содержит «наблюдени». | `upstream_assessment`: `norm_review` (уверенность до потолка) / `observation` / `insufficient` |
+| `confidence_raw` | уверенность до потолков review (0.45) и insufficient (0.3); сама `confidence` не повышается | `_a09_uncapped` берёт её первой (совпадает с восстановлением из `trace.confidence_terms`) |
+| `detection`, `legal_basis` | поведение по видео / правовая опора (`legal_status` + `verified` A13) | для UI и отчётов |
+| `state_after` | у правил ухода: `cash_visible`, `cash_bag_visible`, `safe_open` — среднее по известным кадрам окна 10 с после наблюдаемого ухода; `None`, если известно < 60% кадров (свет выключен, окклюзия); `t_after` — кадр «стол после ухода»; `known_frac`, `valuables_bboxes`, `t_departure` | `v02_after_window` и кадр «после» (`evidence.py`) |
+| `person_side`, `n_outsiders`, `valuables_open` | `cashier` у правил «человек на стороне кассира»; `n_outsiders` = люди − доказанные сотрудники; `valuables_open` = max(сейф, сумка) или `None`, если неизвестно | `v01_client_side`: сторона кассира → V01 не гасится |
+| `negative` | `[{fact, strength}]` — только исключения, **доказанные** внутри интервала; неизвестное отрицанием не бывает | `negative_evidence` |
+| `evidence_t`, `trace` | моменты для кадров; `trace.signals` (с `known_frac`), `clauses`, `interval`, `evidence`, `confidence_terms` | кадры, fallback `state_after` |
+
+Тесты с настоящими `ml.fusion.core`/`ml.fusion.policies` и `ml.scene.types` лежат в
+`tests/test_boundaries.py` (`importorskip`). В этой ветке они пропускаются; на временном слиянии с
+интеграцией — 222/222.
+
+**Синтетические пары, которые правила различают** (`tests/test_boundaries.py`):
+- клиент у окна (`outsider_in_cashier_area = 0`, `n_persons = 2`; по трекам — `visitor` в `client_area`) ↔
+  посторонний на стороне кассира (`visitor` в `cashier_area`). Неизвестная роль (`observed.unknown_person_in_cashier_area`)
+  — не посторонний, максимум наблюдение (H3);
+- мобильный в руке (`phone_in_hand`) ↔ стационарный (`phone_to_ear` без `phone_in_hand`) — второй сигналом не является;
+- уход с оставленными наличными, сумкой или открытым сейфом (V02/V03, `state_after` ≥ 0.5) ↔ уход с убранными
+  ценностями и закрытым сейфом — событий нет;
+- нет обзора (стол или сейф неизвестны после ухода, в том числе prior A08 с `known=False`) → `insufficient_context`,
+  `state_after = None` ↔ объекта нет (известно 0) → событий нет;
+- V08: пересчёт после ухода клиента → кандидат ↔ с клиентом у окна / внутренний пересчёт без клиента (исключение
+  A13) → ничего; присутствие клиента неизвестно → `insufficient_context`; поза без сигнала пересчёта → ничего.
+
+**V08 по каталогу A13** — «пересчёт наличных не в присутствии клиента». Правило
+`V08_counting_without_client`: пересчёт (`cash_counting`) + кассир на месте + клиента у окна доказанно нет +
+до этого клиент был у окна. Если клиента доказанно не было вовсе, это внутренний пересчёт —
+`inaction.before_false: reject`. Прежние V08 «спиной к камере» и «руки скрыты» удалены: A13 относит перекрытие
+рук к исключениям. Правило выключено, потому что сигнала `cash_counting` нет ни у A07, ни у A08. Включается
+гипотезой H10 после появления сигнала и замера L2. `client_present` берётся от A08 (если появится) или выводится
+из треков A06 (`visitor`/`unknown` в `client_area`); производный сигнал односторонний: ушёл из кадра ≠ доказанно нет.
+
+**Разрывы на границе (для L2; чужие модули не менялись):**
+1. `backend/pipeline/serde.py::load_state` (A03) при `cache.normalize_outputs: true` отбрасывает
+   `conf/known/observed/quality`. Вход: `SceneStateEx` A08 с `known=False` и prior в `signals`. Ожидается, что
+   правила получают `known`. Факт: обычный `SceneState`, prior выглядит как наблюдение. Исправление у A03:
+   загрузчик `ml.scene.types.state_from_dict`. Replay читает `states.jsonl` напрямую и поля видит.
+2. `ml/detect/inventory.py::desk_inventory` (A05) — стол и сейф после ухода, мобильный ≠ стационарный, личные
+   вещи — нигде не вызывается и в `SceneState` не попадает. У правил по контракту нет клипа. Ожидается, что
+   A03 или A08 переводят результат в сигналы с семантикой «present / unknown» (никогда не «absent»).
+3. Сигналов `cash_counting` (V08) и `client_present` (от A08) нет; V08 до их появления выключен.
+4. `phone_in_hand` A08 подтверждается COCO `cell_phone`; контраст «мобильный ↔ стационарный» есть только в
+   `desk_inventory` A05. Риск: трубка стационарного телефона в руке даст V05-наблюдение.
+
+**Replay** (падение `test_replay_cli_end_to_end` из второго прохода интеграции исправлено в `f69a462`:
+`--assume-verified` теперь ставит `legal_status: confirmed`; на 2055fc4 `ml/rules` — 200/200).
+
 ## Публичные функции
 
 ```python
@@ -216,7 +274,7 @@ ramp step`, временные `was(x,w) held(x,w) avg(x,w) ahead(x,w) ever(x)`.
 ## Таблица правил (enabled/disabled и причины)
 
 Сгенерирована командой `python -m ml.rules.replay --rules-table` из `rules.yaml`; «Включено» — в профиле
-`baseline` (правила фазы 2 включаются гипотезами H1–H9). Описаний реальных сцен в таблице нет.
+`baseline` (правила фазы 2 включаются гипотезами H1–H10). Описаний реальных сцен в таблице нет.
 
 | Правило | Тип | Вид | Включено | По бездействию | Причина |
 |---|---|---|---|---|---|
@@ -231,8 +289,7 @@ ramp step`, временные `was(x,w) held(x,w) avg(x,w) ahead(x,w) ever(x)`.
 | `V06_eating_drinking` | V06 | observation | нет | — | Выключено: eating_drinking — поведенческий вывод по позе/предметам, не откалиброван; еда сама по себе не доказанное нарушение. Включать только после проверки на train/calibration. |
 | `V07_bag_left_unattended` | V07 | violation | да | да | Включено: конкретное видимое условие «по бездействию» — инкассаторская сумка видна, ни инкассатора, ни кассира в кадре ≥ 5 с, а до этого инкассатор доказанно был в кадре. |
 | `V07_handover_without_collector` | V07 | observation | нет | — | Выключено: семантика handover_motion не откалибрована, обычное обслуживание клиента даёт то же движение; риск ложных наблюдений. |
-| `V08_hands_hidden_with_cash` | V08 | observation | нет | — | Выключено: при потолочной камере руки часто закрыты корпусом/монитором при обычной работе; невидимые руки сами по себе не доказанное нарушение. |
-| `V08_counting_facing_away` | V08 | observation | нет | — | Выключено: «спиной к камере» зависит от ракурса (тест под другим углом) — не переносимо без калибровки. |
+| `V08_counting_without_client` | V08 | violation | нет | да | Выключено: нет наблюдаемого сигнала пересчёта (cash_counting) ни у A07, ни у A08; без него любой кадр с наличными на столе выглядел бы как «пересчёт». Присутствие клиента — client_present (extra A08 или производный из треков A06: человек в client_area). Включать гипотезой H10 после появления сигнала и замера L2. |
 | `V99_placeholder` | V99 | observation | нет | — | Выключено: V99 (иное) не задаётся правилами по сигналам — только VLM discover (A11) / fusion с конкретными видимыми фактами. |
 | `V02_left_cash_after_departure` | V02 | violation | нет | да | Фаза 2, гипотеза H1 (спецификация «ушла и оставила»): ждёт замера L2 на реальных данных. |
 | `V03_left_safe_open_after_departure` | V03 | violation | нет | да | Фаза 2, гипотеза H1 (спецификация «ушла и оставила», сейф открыт): ждёт замера L2. |
@@ -271,7 +328,8 @@ python -m ml.rules.replay --rules-table
 - Вердикт: `--verdict detection` (по умолчанию: есть `violation_candidate`) или `legal` (есть
   `candidate_violation`, то есть ещё и подтверждённая норма). `--assume-verified` — калибровка юридической
   политики. `--count-review` — диагностика.
-- Вывод: таблица по видео (GT и альтернативы, вердикт, тип, обнаружение, норма, `t_peak`, Δt, момент,
+- Вывод: таблица правил активного профиля (включено ли и почему; `--no-rules-table` скрывает); таблица по
+  видео (GT и альтернативы, вердикт, тип, обнаружение, норма, `t_peak`, Δt, момент,
   правило, предикаты в `t_peak`); TP/FP/FN/TN, precision/recall/F1, `det`/`time`/`joint`, hit ≤ 0.5/1/2/3/5 с,
   медиана |Δt|, типы на TP, latency, срабатывания каждого правила на чистых и нарушающих видео.
   `--trace` печатает статус каждого предиката и исключения: true/false/unknown в `t_peak`, доли по интервалу.
@@ -279,7 +337,7 @@ python -m ml.rules.replay --rules-table
 ## Тесты
 
 ```bash
-python -m pytest ml/rules/tests -q        # 199 тестов, без GPU, весов и данных (~12 с)
+python -m pytest ml/rules/tests -q        # 222 теста (3 пропускаются без ml.fusion/ml.scene), ~12 с
 ```
 
 Синтетика из `ml/rules/synth.py` (без реальных кадров и описаний сцен):
@@ -300,6 +358,10 @@ python -m pytest ml/rules/tests -q        # 199 тестов, без GPU, вес
 - `test_replay.py`: раскладки кэша (включая A03 `cache/<sha>/`, имена по `summary.json`), CSV (`;`, cp1251,
   кириллическая Х, схема L1 с дубликатами и конфликтом таймкодов), сквозной CLI, обе политики вердикта,
   абляция `--hypotheses all`, `--propose`, sweep, таблица правил.
+- `test_boundaries.py` (границы A08 → A09 → A12): клиент ↔ посторонний (сигналы и треки/зоны), мобильный ↔
+  стационарный, ценности убраны ↔ оставлены, нет обзора ↔ нет объекта (в том числе prior A08 с `known=False`),
+  V08 с клиентом / без / внутренний пересчёт / неизвестно / поза; поля `confidence_raw`, `state_after`,
+  `person_side`, `negative`; тесты с настоящими `ml.fusion` и `ml.scene.types` (`importorskip`).
 - `test_phase2.py` (фаза 2): на каждую гипотезу H1–H9 — **нарушение + чистый двойник + неизвестное**
   при политиках `evidence` и `transition`; профиль `phase2` на 10 чистых сценариях без единого события;
   несколько настоящих событий сохраняются, дребезг склеивается; уход в начале ролика не считается уходом;
@@ -310,7 +372,8 @@ python -m pytest ml/rules/tests -q        # 199 тестов, без GPU, вес
   считается фактом), `legal_status` A13, независимость `detection` от норм, `coverage()`.
 
 Проверено: Python 3.13 (numpy 2.5.3) и Python 3.11 (numpy 1.26.4, PyYAML 6.0.2, pytest 8.3.3) —
-199/199; `ruff check --select E,F,W,B --line-length 120` — чисто (кроме дословной копии контракта). **Метрик на реальных роликах нет**: данных в этой среде нет, значения не выдумывались.
+219 passed + 3 skipped; `ruff check --select E,F,W,B --line-length 120` — чисто. Пробное слияние с
+`claude/integration-cloud` 2055fc4 без конфликтов, на нём `ml/rules` 222/222. **Метрик на реальных роликах нет**: данных в этой среде нет, значения не выдумывались.
 
 ## Зависимости, модели, лицензии
 
@@ -361,9 +424,9 @@ python -m pytest ml/rules/tests -q        # 199 тестов, без GPU, вес
 7. **Env**: `SENTINEL_RULES_YAML=/path/rules.yaml` — альтернативный конфиг; `SENTINEL_RULES_PROFILE=phase2`
    — профиль (по умолчанию `baseline`; сам production профиль не меняет).
    A08 может слать extra-сигнал `personal_items_on_desk` (V09); иначе он выводится из треков (`bag` в `desk`).
-8. **Контракт**: `ml/rules/_contract_fallback.py` — копия контракта v1. Удалить после мерджа ветки A01:
-   импорт идёт через `try: from contracts.sentinel_contracts import ...`. `run_rules` принимает
-   необязательный 5-й аргумент `config` — сигнатура контракта не нарушена. Предложение для A01 (не
-   реализовано в контракте): закрепить `Event.extra["assessment"]` / `evidence_t` как стандартные ключи.
-9. **Git**: ветка начинается от `076a23b` ([A01] contract, без общей истории с `main`). Разные начальные
-   истории объединяет интегратор.
+8. **Контракт**: fallback-копия контракта удалена (как в `claude/integration-cloud`, коммит A03 `a6a96f3`),
+   импорты идут из `contracts.sentinel_contracts`. `run_rules` принимает необязательный 5-й аргумент
+   `config` — сигнатура контракта не нарушена. Ключи `Event.extra` (`detection`, `legal_basis`, `assessment`,
+   `evidence_t`, `trace.clauses/interval/evidence`) — кандидаты в стандартные (`contracts/extensions.py`, A01).
+9. **Git**: ветка начинается от `076a23b` (контракт A01), общей истории с `main` нет; PR открыт в
+   интеграционную ветку `claude/integration-cloud`, куда A03 уже влил A09 до `41c1407`.

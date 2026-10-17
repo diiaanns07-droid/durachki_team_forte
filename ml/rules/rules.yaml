@@ -70,6 +70,8 @@ extra_signals:
   - safe_unattended
   - frame_quality
   - personal_items_on_desk
+  - client_present          # клиент у окна со своей стороны: extra от A08 или производный из треков (client_area)
+  - cash_counting           # пересчёт наличных кассиром (V08): производителя пока нет (A07/A08)
 
 default_profile: baseline
 
@@ -102,6 +104,7 @@ rules:
     strength: "outsider_in_cashier_area"
     gate: "not (collector_present > 0.5 and n_persons <= 2)"
     gate_mode: lenient
+    person_side: cashier      # outsider_in_cashier_area — по определению сторона кассира (клиент у окна — не он)
     min_duration_s: 2.0
     merge_gap_s: 2.0
     t_peak: {policy: evidence, trigger: "outsider_in_cashier_area > 0.5", lookback_s: 3}
@@ -124,7 +127,9 @@ rules:
       Требуется: до начала сегмента кассир доказанно был в кадре; начало не обрезано; сигналы
       известны ≥ 80% кадров; длительность ≥ min_duration_s.
     strength: "max(workplace_unattended_with_cash, min(cash_visible, not cashier_present))"
-    anchor: "cash_visible > 0.5"
+    # якорь: доказана одна часть, другая неизвестна → insufficient_context (стол не виден ≠ стол пуст)
+    anchor: "cash_visible > 0.5 or cashier_present < 0.3"
+    state_after: {window_s: 10, after_min_s: 1.0}
     t_peak: {policy: evidence, trigger: "cashier_present < 0.3", lookback_s: 10}
     inaction:
       before: "cashier_present > 0.5"
@@ -154,6 +159,7 @@ rules:
     strength: "min(safe_open, outsider_in_cashier_area)"
     gate: "not (collector_present > 0.5 and n_persons <= 2)"
     gate_mode: lenient
+    person_side: cashier
     anchor: "safe_open > 0.5"
     t_peak: {policy: evidence, trigger: "safe_open > 0.5 and outsider_in_cashier_area > 0.5", lookback_s: 3}
     min_duration_s: 1.5
@@ -172,7 +178,8 @@ rules:
     comment: >-
       V03 — кассир вышел, сейф остался открытым без присмотра (по бездействию).
     strength: "min(safe_open, not cashier_present)"
-    anchor: "safe_open > 0.5"
+    anchor: "safe_open > 0.5 or cashier_present < 0.3"
+    state_after: {window_s: 10, after_min_s: 1.0}
     t_peak: {policy: evidence, trigger: "cashier_present < 0.3", lookback_s: 10}
     inaction:
       before: "safe_open > 0.5 and cashier_present > 0.5"
@@ -311,32 +318,39 @@ rules:
     highlight: ["label:cash_bag", "role:visitor", "role:unknown"]
 
   # ------------------------------------------------------------------ V08
-  - id: V08_hands_hidden_with_cash
+  # A13: V08 = «пересчёт наличных не в присутствии клиента» (п. 20 Правил НБРК № 231, legal_status: candidate,
+  # цитата не сверена). Наблюдаемое: кассир пересчитывает наличные, когда клиента у окна нет, а до этого клиент
+  # был у окна (операция с клиентом). «Спиной к камере» и «руки перекрыты» — не признаки V08 (исключение A13:
+  # перекрытие рук счётчиком/монитором из-за ракурса), прежние такие правила удалены.
+  - id: V08_counting_without_client
     type_id: V08
-    kind: observation
+    kind: violation
     enabled: false
     status_reason: >-
-      Выключено: при потолочной камере руки часто закрыты корпусом/монитором при обычной работе;
-      невидимые руки сами по себе не доказанное нарушение.
-    comment: "V08 (наблюдение) — руки скрыты от камеры ≥ 3 с при видимых наличных."
-    strength: "min(hands_hidden, cash_visible)"
+      Выключено: нет наблюдаемого сигнала пересчёта (cash_counting) ни у A07, ни у A08; без него любой кадр с
+      наличными на столе выглядел бы как «пересчёт». Присутствие клиента — client_present (extra A08 или
+      производный из треков A06: человек в client_area). Включать гипотезой H10 после появления сигнала и замера L2.
+    comment: >-
+      V08 — пересчёт без клиента: кассир на месте пересчитывает наличные, клиента у окна нет (доказано), а в
+      пределах 60 с до этого клиент у окна был (операция с клиентом, а не внутренний пересчёт — исключение A13).
+      Присутствие клиента неизвестно (зона окна вне кадра) — insufficient_context, не нарушение.
+    predicates:
+      - {id: counting, label: "кассир пересчитывает наличные", expr: "cash_counting > 0.6"}
+      - {id: at_desk, label: "кассир на рабочем месте", expr: "cashier_in_workplace > 0.7"}
+      - {id: client_absent, label: "клиента у окна нет (доказано)", expr: "client_present < 0.3"}
+    exclusions:
+      - {id: collection, label: "инкассация (инкассатор в кадре)", expr: "collector_present > 0.5"}
+    anchor: "cash_counting > 0.6 and cashier_in_workplace > 0.7"
+    inaction: {before: "client_present > 0.7", before_window_s: 60, edge_s: 1.0, min_coverage: 0.8,
+               before_false: reject}
     min_duration_s: 3.0
+    merge_gap_s: 2.0
+    t_peak: {policy: evidence, trigger: "client_present < 0.3", lookback_s: 10}
     facts:
-      - "С {t_start:.1f} по {t_end:.1f} с руки кассира не видны камере при видимых наличных."
-    highlight: ["role:cashier", "label:cash"]
-
-  - id: V08_counting_facing_away
-    type_id: V08
-    kind: observation
-    enabled: false
-    status_reason: >-
-      Выключено: «спиной к камере» зависит от ракурса (тест под другим углом) — не переносимо без калибровки.
-    comment: "V08 (наблюдение) — кассир спиной к камере при видимых наличных."
-    strength: "min(cashier_facing_away, cash_visible, cashier_in_workplace)"
-    min_duration_s: 4.0
-    facts:
-      - "С {t_start:.1f} по {t_end:.1f} с кассир расположен спиной к камере при видимых наличных."
-    highlight: ["role:cashier", "label:cash"]
+      - "С {t_start:.1f} по {t_end:.1f} с кассир на рабочем месте пересчитывает наличные; клиента у окна нет."
+    facts_stage:
+      - "До этого клиент находился у окна кассы."
+    highlight: ["role:cashier", "label:cash", "label:money_counter", "zone:client_area"]
 
   # ------------------------------------------------------------------ V99
   - id: V99_placeholder
@@ -366,6 +380,7 @@ rules:
       - {id: desk_valuables, label: "на столе наличные или инкассаторская сумка", expr: "cash_visible > 0.5 or cash_bag_visible > 0.5"}
     anchor: "cashier_in_workplace < 0.3"
     inaction: {before: "cashier_in_workplace > 0.7", before_window_s: 30, edge_s: 1.0, min_coverage: 0.8}
+    state_after: {window_s: 10, after_min_s: 1.0}
     min_duration_s: 3.0
     merge_gap_s: 2.0
     t_peak: {policy: evidence, trigger: "cashier_in_workplace < 0.3", lookback_s: 10}
@@ -390,6 +405,7 @@ rules:
       - {id: safe_open, label: "сейф открыт", expr: "safe_open > 0.5"}
     anchor: "cashier_in_workplace < 0.3"
     inaction: {before: "cashier_in_workplace > 0.7", before_window_s: 30, edge_s: 1.0, min_coverage: 0.8}
+    state_after: {window_s: 10, after_min_s: 1.0}
     min_duration_s: 3.0
     merge_gap_s: 2.0
     t_peak: {policy: evidence, trigger: "cashier_in_workplace < 0.3", lookback_s: 10}
@@ -431,6 +447,7 @@ rules:
       (неизвестная роль ≠ неуполномоченный), не нарушение.
     comment: "V01 (наблюдение) — observed.unknown_person_in_cashier_area от A08 ≥ 2 с."
     strength: "unknown_person_in_cashier_area > 0.5"
+    person_side: cashier
     min_duration_s: 2.0
     t_peak: {policy: evidence, trigger: "unknown_person_in_cashier_area > 0.5", lookback_s: 3}
     facts:
@@ -582,6 +599,9 @@ hypotheses:
   H9_bag_left_after_handover:
     what: "сумка оставлена после ухода инкассатора ≥ 15 с без открытого сейфа (V07)"
     set: ["rules.V07_bag_left_after_handover.enabled=true"]
+  H10_counting_without_client:
+    what: "пересчёт без клиента у окна после операции с клиентом (V08); нужен сигнал cash_counting"
+    set: ["rules.V08_counting_without_client.enabled=true"]
 
 profiles:
   baseline: []

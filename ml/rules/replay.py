@@ -197,9 +197,14 @@ def run_replay(cache: dict[str, dict[str, Any]], labels: dict[str, list[dict[str
                 row["hit"] = abs(row["dt"]) <= tol
         bucket = "violation" if row["gt"] else ("clean" if row["gt"] is False else "unlabeled")
         for e in evs:
+            # в источники FP/TP идут только события, которые считаются в вердикте; наблюдения и
+            # insufficient_context — отдельными колонками (не «срабатывания на чистых»)
+            col = bucket if _is_positive(e, verdict, count_review) else (
+                "insufficient" if assessment_of(e) == INSUFFICIENT else "observation")
             for rid in e.extra.get("rule_ids", []):
-                d = rule_fires.setdefault(rid, {"violation": 0, "clean": 0, "unlabeled": 0})
-                d[bucket] += 1
+                d = rule_fires.setdefault(rid, {"violation": 0, "clean": 0, "unlabeled": 0,
+                                                "observation": 0, "insufficient": 0})
+                d[col] += 1
         videos.append(row)
     return {"videos": videos, "summary": summarize(videos, tol, timings, count_review, verdict),
             "rule_fires": rule_fires}
@@ -250,8 +255,22 @@ def summarize(videos: list[dict[str, Any]], tol: float, timings: Sequence[float]
     }
 
 
+def rules_status_table(cfg: Any, width: int = 100) -> str:
+    """Компактная таблица правил активного профиля: включено ли и почему."""
+    rows = []
+    for r in cfg.rules_table():
+        reason = " ".join(str(r["reason"]).split())
+        rows.append([r["id"], r["type_id"], r["kind"], r["enabled"],
+                     reason if len(reason) <= width else reason[: width - 1] + "…"])
+    return _table(rows, ["правило", "тип", "вид", "включено", "причина"])
+
+
 def _print_report(res: dict[str, Any], tol: float, show_events: bool, catalog_src: str, cfg: Any,
-                  show_trace: bool = False) -> None:
+                  show_trace: bool = False, show_rules: bool = True) -> None:
+    if show_rules:
+        print(f"Правила (профиль {cfg.profile}):")
+        print(rules_status_table(cfg))
+        print()
     rows = []
     for v in res["videos"]:
         gt_t = "/".join(f"{t:g}" for t in v.get("gt_all_t") or []) or None
@@ -292,8 +311,10 @@ def _print_report(res: dict[str, Any], tol: float, show_events: bool, catalog_sr
           f"max={_fmt(s['latency_ms']['max'], 1)} мс | VRAM: 0 (CPU)")
     fires = s.get("rule_fires") or res.get("rule_fires")
     if fires:
-        print(_table([[rid, d["violation"], d["clean"], d["unlabeled"]] for rid, d in sorted(fires.items())],
-                     ["правило", "на нарушениях", "на чистых", "без разметки"]))
+        print(_table([[rid, d["violation"], d["clean"], d["unlabeled"], d.get("observation", 0),
+                       d.get("insufficient", 0)] for rid, d in sorted(fires.items())],
+                     ["правило", "кандидат: на нарушениях", "кандидат: на чистых (FP)", "кандидат: без разметки",
+                      "наблюдения", "insufficient"]))
 
 
 def _variants(raw: dict, hyp_arg: str) -> list[tuple[str, str, list[str]]]:
@@ -443,6 +464,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--json", dest="json_out", help="сохранить результаты в JSON")
     ap.add_argument("--csv", dest="csv_out", help="сохранить таблицу по видео в CSV")
     ap.add_argument("--rules-table", action="store_true", help="напечатать таблицу правил (markdown) и выйти")
+    ap.add_argument("--no-rules-table", action="store_true", help="не печатать таблицу правил в отчёте")
     args = ap.parse_args(argv)
 
     raw, src = read_raw_config(args.rules)
@@ -503,7 +525,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             Path(args.json_out).write_text(json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
         return 0
     res = run_replay(cache, labels, cfg, catalog, args.tol, args.min_conf, args.count_review, args.verdict, dedupe)
-    _print_report(res, args.tol, args.events, cat_src, cfg, args.trace)
+    _print_report(res, args.tol, args.events, cat_src, cfg, args.trace, not args.no_rules_table)
     if args.json_out:
         Path(args.json_out).write_text(json.dumps(res, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
     if args.csv_out:

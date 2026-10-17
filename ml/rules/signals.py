@@ -305,6 +305,9 @@ def derive_from_tracks(
     outsider = np.zeros(n)
     obj_presence: dict[str, np.ndarray] = {}
     desk_bag = np.zeros(n) if "desk" in zone_polys else None  # личная сумка (label bag) на столе — V09
+    # клиент у окна со своей стороны: односторонний сигнал — 1, где клиент виден в client_area, иначе
+    # неизвестно (NaN): «трекер клиента не видит» ≠ «клиента нет» (окно может быть вне кадра)
+    client = np.full(n, np.nan) if "client_area" in zone_polys else None
     has_person = False
     workplace_zone = "desk" if "desk" in zone_polys else ("cashier_area" if "cashier_area" in zone_polys else None)
     for tr in tracks:
@@ -336,9 +339,11 @@ def derive_from_tracks(
                         cashier_wp[i] = max(cashier_wp[i], conf)
                 elif role == "collector":
                     collector[i] = max(collector[i], conf)
-                elif role == "visitor":
-                    if in_zone(box, "cashier_area"):
-                        outsider[i] = max(outsider[i], conf)
+                elif role == "visitor" and in_zone(box, "cashier_area"):
+                    outsider[i] = max(outsider[i], conf)
+                if role in ("visitor", "unknown") and client is not None and in_zone(box, "client_area") \
+                        and not in_zone(box, "cashier_area"):
+                    client[i] = conf if np.isnan(client[i]) else max(client[i], conf)
         else:
             arr = obj_presence.setdefault(label, np.zeros(n))
             np.maximum(arr, present.astype(float), out=arr)
@@ -361,4 +366,6 @@ def derive_from_tracks(
             out[sig] = obj_presence[label]
     if desk_bag is not None:
         out["personal_items_on_desk"] = desk_bag
+    if client is not None and has_person:
+        out["client_present"] = client
     return out

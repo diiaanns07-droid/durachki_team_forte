@@ -65,6 +65,9 @@ class InactionSpec:
     before_window_s: float = 30.0
     edge_s: float = 1.0
     min_coverage: float = 0.8
+    # предшествующее состояние ДОКАЗАННО ложно во всём окне: insufficient (по умолчанию) или reject
+    # (это не та ситуация — например, V08: клиента не было вовсе → внутренний пересчёт, исключение A13)
+    before_false: str = "insufficient"
 
 
 @dataclass
@@ -118,6 +121,9 @@ class RuleSpec:
     yield_to: list[str] = field(default_factory=list)
     yield_factor: float = 0.7
     max_events: int = 3
+    state_after_window_s: float = 0.0       # >0: событие несёт extra.state_after (стол/сейф после ухода)
+    state_after_min_s: float = 1.0          # кадр «после» не раньше, чем через столько секунд после ухода
+    person_side: Optional[str] = None       # extra.person_side для A12 (cashier | client); None — не задаётся
 
     @property
     def mandatory_names(self) -> frozenset[str]:
@@ -162,6 +168,7 @@ class RulesConfig:
     observation_conf_cap: float = 0.45
     insufficient_conf_cap: float = 0.3
     derived_conf_factor: float = 0.85
+    state_after_min_known: float = 0.6     # доля известных кадров окна «после», иначе значение None
     severity_factor: dict[str, float] = field(default_factory=lambda: {"high": 1.0, "medium": 0.97, "low": 0.93})
     known_signals: frozenset[str] = frozenset(SIGNALS)
     source_path: Optional[str] = None
@@ -359,6 +366,7 @@ def parse_rules_config(raw: Mapping[str, Any], source_path: Optional[str] = None
         observation_conf_cap=_num(glob, "observation_conf_cap", 0.45, 0, 1, "global."),
         insufficient_conf_cap=_num(glob, "insufficient_conf_cap", 0.3, 0, 1, "global."),
         derived_conf_factor=_num(glob, "derived_conf_factor", 0.85, 0, 1, "global."),
+        state_after_min_known=_num(glob, "state_after_min_known", 0.6, 0, 1, "global."),
         severity_factor={str(k): float(v) for k, v in sev.items()},
         known_signals=known,
         source_path=source_path,
@@ -418,7 +426,10 @@ def parse_rules_config(raw: Mapping[str, Any], source_path: Optional[str] = None
                 before_window_s=_num(ina, "before_window_s", 30.0, 0, 3600, where + "inaction."),
                 edge_s=_num(ina, "edge_s", 1.0, 0, 60, where + "inaction."),
                 min_coverage=_num(ina, "min_coverage", 0.8, 0, 1, where + "inaction."),
+                before_false=str(ina.get("before_false", "insufficient")),
             )
+            if inaction.before_false not in ("insufficient", "reject"):
+                raise ConfigError(f"{where}inaction.before_false={inaction.before_false!r} (insufficient | reject)")
         tp = r.get("t_peak") or {}
         if isinstance(tp, str):
             tp = {"policy": tp}
@@ -450,6 +461,11 @@ def parse_rules_config(raw: Mapping[str, Any], source_path: Optional[str] = None
         facts_stage = [str(f) for f in (r.get("facts_stage") or [])]
         for tmpl in facts + facts_stage:
             _template_fields(tmpl)
+        sa_cfg = r.get("state_after") or {}
+        if not isinstance(sa_cfg, Mapping):
+            raise ConfigError(f"{where}state_after: ожидался словарь {{window_s, after_min_s}}")
+        if r.get("person_side") not in (None, "", "cashier", "client"):
+            raise ConfigError(f"{where}person_side={r.get('person_side')!r} (ожидалось cashier | client)")
         enabled = bool(r.get("enabled", True))
         reason = str(r.get("status_reason") or "").strip()
         if not reason:
@@ -495,6 +511,9 @@ def parse_rules_config(raw: Mapping[str, Any], source_path: Optional[str] = None
             yield_to=[str(y) for y in (r.get("yield_to") or [])],
             yield_factor=_num(r, "yield_factor", 0.7, 0, 1, where),
             max_events=int(_num(r, "max_events", 3, 1, 100, where)),
+            state_after_window_s=_num(sa_cfg, "window_s", 0.0, 0, 600, where + "state_after."),
+            state_after_min_s=_num(sa_cfg, "after_min_s", 1.0, 0, 60, where + "state_after."),
+            person_side=(str(r["person_side"]) if r.get("person_side") not in (None, "") else None),
         )
         for nm in sorted(spec.names):
             if nm not in known:

@@ -119,7 +119,8 @@ def _a03_cache(tmp_path: Path) -> tuple[Path, Path, Path]:
         with open(d / "states.jsonl", "w", encoding="utf-8") as fh:
             for st in make_states(60.0, segments=segs):
                 fh.write(json.dumps({"t": st.t, "signals": st.signals}) + "\n")
-        (d / "dets.jsonl").write_text(json.dumps({"t": 0.0, "label": "person", "bbox": [0, 0, 1, 1], "score": 1}) + "\n",
+        det = {"t": 0.0, "label": "person", "bbox": [0, 0, 1, 1], "score": 1}
+        (d / "dets.jsonl").write_text(json.dumps(det) + "\n",
                                       encoding="utf-8")
         (d / "manifest.json").write_text(json.dumps({"sha256": sha, "video": {"duration": 60.0}}), encoding="utf-8")
     summary = tmp_path / "summary.json"
@@ -144,6 +145,7 @@ def test_a03_layout_names_dedupe_and_conflict(tmp_path: Path, capsys: pytest.Cap
                  "--trace"]) == 0
     text = capsys.readouterr().out
     assert "TP=2 FP=0 FN=0 TN=1" in text          # Х-4 ≡ X-47 — один ролик
+    assert "Правила (профиль baseline)" in text and "V09_personal_items_on_desk" in text  # enabled/disabled + причина
     assert "конфликт таймкода: 1" in text and "predicate" in text
     res = json.loads(out_json.read_text(encoding="utf-8"))
     assert res["summary"]["n_labeled"] == 3 and res["summary"]["joint"] is not None
@@ -164,3 +166,18 @@ def test_ablation_and_propose(tmp_path: Path, capsys: pytest.CaptureFixture[str]
     assert main(["--cache", str(cache), "--labels", str(labels), "--names", str(summary), "--propose"]) == 0
     out = capsys.readouterr().out
     assert "joint" in out or "не найдено" in out
+
+
+def test_rule_fires_count_only_verdict_events_as_fp_sources(tmp_path: Path) -> None:
+    """insufficient_context на чистом видео — не «срабатывание на чистых» (иначе ложный источник FP)."""
+    from ml.rules.replay import run_replay
+    from ml.rules.config import load_rules_config
+
+    cache = {"x1": {"name": "X-1", "states": [{"t": s.t, "signals": s.signals} for s in make_states(
+        60.0, segments=[(20.0, 35.0, {"cashier_present": 0.0, "cashier_in_workplace": 0.0, "cash_visible": None})])],
+        "tracks": [], "zones": []}}
+    labels = {"x1": [{"name": "X-1", "violation": False, "t": None}]}
+    res = run_replay(cache, labels, load_rules_config(), {"types": {}})
+    fires = res["rule_fires"]["V02_cash_left_unattended"]
+    assert fires["clean"] == 0 and fires["insufficient"] >= 1
+    assert res["summary"]["fp"] == 0

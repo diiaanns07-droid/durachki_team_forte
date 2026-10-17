@@ -455,6 +455,7 @@ def _make_event(rule: RuleSpec, series: SignalSeries, strength: np.ndarray, i0: 
     if any(n in series.derived for n in rule.names):
         conf *= cfg.derived_conf_factor  # грубые сигналы из треков — ниже доверие
         terms["derived_factor"] = cfg.derived_conf_factor
+    conf_raw = conf  # до потолков review/insufficient — A12 восстанавливает ранжирование norm_review
     if assessment == REVIEW:
         conf = min(conf, cfg.observation_conf_cap)
     elif assessment == INSUFFICIENT:
@@ -536,6 +537,22 @@ def _make_event(rule: RuleSpec, series: SignalSeries, strength: np.ndarray, i0: 
     trace["evidence"] = dict(transition, t_peak=_r(t_peak, 2))
     if from_anchor:
         trace["from_anchor"] = True
+    boundary: dict[str, Any] = {}
+    if rule.state_after_window_s > 0:
+        t_dep = t_start
+        sa_trig = aux.get("sa_trigger")
+        if sa_trig is not None:
+            jd, _ = _transition_index(times, sa_trig[0], sa_trig[1], i0, i1, rule.t_peak_lookback_s)
+            if jd is not None:
+                t_dep = float(times[jd])
+        boundary["state_after"] = _state_after(series, t_dep, rule, tracks, cfg)
+    if rule.person_side:
+        boundary.update(_person_fields(rule, series, ip))
+    negative = [{"fact": c.label, "strength": _rf((aux[("excl", c.id)][0][i0:i1 + 1] >= 0.5).mean(), 3)}
+                for c in rule.exclusions if ("excl", c.id) in aux
+                and (aux[("excl", c.id)][0][i0:i1 + 1] >= 0.5).any()]
+    if negative:
+        boundary["negative"] = negative
     return Event(
         type_id=rule.type_id,
         t_start=_rf(t_start, 2),
@@ -558,10 +575,80 @@ def _make_event(rule: RuleSpec, series: SignalSeries, strength: np.ndarray, i0: 
             "severity": info["severity"],
             "in_catalog": info["in_catalog"],
             "norm_status": norm["status"],
+            "confidence_raw": _rf(conf_raw),
             "evidence_t": evidence_t,
+            **boundary,
             "trace": trace,
         },
     )
+
+
+_VALUABLES_AFTER = ("cash_visible", "cash_bag_visible", "safe_open")
+
+
+def _state_after(series: SignalSeries, t_dep: float, rule: RuleSpec, tracks: Sequence[Any],
+                 cfg: RulesConfig) -> dict[str, Any]:
+    """Стол и сейф в окне ПОСЛЕ ухода (A12: v02_after_window, кадр «после»). None = неизвестно.
+
+    Значение — среднее по кадрам окна с известным сигналом; если известна меньше чем
+    ``state_after_min_known`` доля кадров (свет выключен, окклюзия) — None: «стол пуст» не выводится.
+    """
+    times = series.times
+    t_end = min(float(times[-1]), t_dep + rule.state_after_window_s)
+    j0 = int(np.searchsorted(times, t_dep - 1e-9, side="left"))
+    j1 = int(np.searchsorted(times, t_end + 1e-9, side="right"))
+    out: dict[str, Any] = {"t_departure": _r(t_dep, 2), "window": [_r(t_dep, 2), _r(t_end, 2)],
+                           "known_frac": {}, "t_after": None, "valuables_bboxes": {}}
+    if j1 <= j0:
+        for nm in _VALUABLES_AFTER:
+            out[nm] = None
+        return out
+    present_any = np.zeros(j1 - j0, dtype=bool)
+    known_any = np.zeros(j1 - j0, dtype=bool)
+    for nm in _VALUABLES_AFTER:
+        arr = series.signals.get(nm)
+        if arr is None:
+            out[nm], out["known_frac"][nm] = None, 0.0
+            continue
+        win = arr[j0:j1]
+        known = np.isfinite(win)
+        frac = float(known.mean())
+        out["known_frac"][nm] = _rf(frac, 3)
+        out[nm] = _r(win[known].mean()) if known.any() and frac + 1e-9 >= cfg.state_after_min_known else None
+        known_any |= known
+        present_any |= known & (np.nan_to_num(win, nan=0.0) >= 0.5)
+    late = times[j0:j1] >= t_dep + rule.state_after_min_s - 1e-9
+    for mask in (present_any & late, known_any & late):
+        hits = np.nonzero(mask)[0]
+        if hits.size:
+            out["t_after"] = _r(times[j0 + int(hits[0])], 2)
+            break
+    if out["t_after"] is not None:
+        for tr in tracks or ():
+            label, tid = _get(tr, "label"), _get(tr, "track_id")
+            if label in ("cash", "cash_bag", "safe_open"):
+                bb = track_box_at(tr, float(out["t_after"]), cfg.bbox_tol_s)
+                if bb is not None:
+                    out["valuables_bboxes"][f"{label}#{tid}"] = tuple(_rf(min(1.0, max(0.0, v)), 4) for v in bb)
+    return out
+
+
+def _person_fields(rule: RuleSpec, series: SignalSeries, ip: int) -> dict[str, Any]:
+    """Сторона человека и контекст для A12 (v01_client_side): только наблюдаемые значения, иначе None."""
+    def at(name: str) -> Optional[float]:
+        arr = series.signals.get(name)
+        if arr is None or not np.isfinite(arr[ip]):
+            return None
+        return float(arr[ip])
+
+    n_persons = at("n_persons")
+    n_out = None
+    if n_persons is not None:
+        staff = sum(1 for nm in ("cashier_present", "collector_present") if (at(nm) or 0.0) >= 0.5)
+        n_out = max(0, int(round(n_persons)) - staff)
+    opened = [v for v in (at("safe_open"), at("cash_bag_visible")) if v is not None]
+    return {"person_side": rule.person_side, "n_outsiders": n_out,
+            "valuables_open": _r(max(opened)) if opened else None}
 
 
 def _assess(rule: RuleSpec, catalog: Mapping[str, Any], cfg: RulesConfig) -> tuple[str, list[str]]:
@@ -574,8 +661,11 @@ def _assess(rule: RuleSpec, catalog: Mapping[str, Any], cfg: RulesConfig) -> tup
     return CANDIDATE, []
 
 
+REJECT = "__reject__"  # маркер: предшествующее состояние доказанно ложно и правило задано before_false=reject
+
+
 def _stage_reasons(rule: RuleSpec, series: SignalSeries, s_lo: np.ndarray, s_hi: np.ndarray, i0: int, i1: int,
-                   before_lo: Optional[np.ndarray]) -> list[str]:
+                   before_lo: Optional[np.ndarray], before_hi: Optional[np.ndarray] = None) -> list[str]:
     """Проверка полноты этапа для правил «по бездействию»."""
     ina = rule.inaction
     if ina is None:
@@ -589,6 +679,10 @@ def _stage_reasons(rule: RuleSpec, series: SignalSeries, s_lo: np.ndarray, s_hi:
         lo_idx = int(np.searchsorted(times, t_start - ina.before_window_s - 1e-9, side="left"))
         window = before_lo[lo_idx:i0]
         if window.size == 0 or not bool((window >= 0.5).any()):
+            hi_win = before_hi[lo_idx:i0] if before_hi is not None else None
+            if (ina.before_false == "reject" and hi_win is not None and hi_win.size
+                    and not bool((hi_win >= 0.5).any())):
+                return [REJECT]  # доказанно не было (не «не видно») — это не та ситуация
             reasons.append(f"предшествующее состояние ({ina.before.source}) "
                            f"не наблюдалось за {ina.before_window_s:g} с")
     # кадр «не наблюдён», если условие не доказано, но возможно (неизвестные сигналы);
@@ -617,6 +711,12 @@ def _rule_events(rule: RuleSpec, series: SignalSeries, ctx: EvalContext, s_lo: n
         aux[("pred", c.id)] = c.expr.bounds(ctx)
     for c in rule.exclusions:
         aux[("excl", c.id)] = c.expr.bounds(ctx)
+    if rule.state_after_window_s > 0:  # момент ухода для окна «после» — независимо от политики t_peak
+        trig = rule.trigger or rule.strength
+        slo, shi = trig.bounds(ctx)
+        slo = smooth(np.clip(slo, 0.0, 1.0), series.dt, rule.smooth_s, rule.smooth_method)
+        shi = np.maximum(smooth(np.clip(shi, 0.0, 1.0), series.dt, rule.smooth_s, rule.smooth_method), slo)
+        aux["sa_trigger"] = (slo, shi)
     if (cfg.t_peak_policy_override or rule.t_peak_policy) == "transition":
         trig = rule.trigger or rule.strength
         tlo, thi = trig.bounds(ctx)
@@ -624,9 +724,9 @@ def _rule_events(rule: RuleSpec, series: SignalSeries, ctx: EvalContext, s_lo: n
         thi = np.maximum(smooth(np.clip(thi, 0.0, 1.0), series.dt, rule.smooth_s, rule.smooth_method), tlo)
         aux["trigger"] = (tlo, thi)
         aux["trigger_src"] = trig.source
-    before_lo = None
+    before_lo = before_hi = None
     if rule.inaction is not None and rule.inaction.before is not None:
-        before_lo = rule.inaction.before(ctx)
+        before_lo, before_hi = rule.inaction.before.bounds(ctx)
     edge_end = rule.inaction.edge_s if rule.inaction else 0.0
 
     # 1) доказанные сегменты
@@ -647,7 +747,12 @@ def _rule_events(rule: RuleSpec, series: SignalSeries, ctx: EvalContext, s_lo: n
                 cand["rejected"] = f"короче min_duration_s={rule.min_duration_s}"
                 candidates.append(cand)
                 continue
-        reasons += [r for r in _stage_reasons(rule, series, s_lo, s_hi, i0, i1, before_lo) if r not in reasons]
+        stage = _stage_reasons(rule, series, s_lo, s_hi, i0, i1, before_lo, before_hi)
+        if REJECT in stage:
+            cand["rejected"] = "предшествующее состояние доказанно отсутствовало (before_false=reject)"
+            candidates.append(cand)
+            continue
+        reasons += [r for r in stage if r not in reasons]
         if reasons:
             assessment = INSUFFICIENT
         else:
@@ -748,6 +853,15 @@ def _merge_same_type(events: list[Any], cfg: RulesConfig) -> list[Any]:
             extra["detection"] = max((e.extra.get("detection", "observation") for e in g),
                                      key=lambda d: det_rank.get(d, 0))
             extra["evidence_t"] = sorted({t for e in top for t in e.extra.get("evidence_t", [])} | {first.t_peak})[:3]
+            extra["confidence_raw"] = max(float(e.extra.get("confidence_raw", e.confidence)) for e in top)
+            if "state_after" not in extra:
+                sa = next((e.extra["state_after"] for e in sorted(top, key=lambda e: e.t_start)
+                           if "state_after" in e.extra), None)
+                if sa is not None:
+                    extra["state_after"] = sa
+            negs = [n for e in g for n in e.extra.get("negative", [])]
+            if negs:
+                extra["negative"] = negs
             extra["merged"] = [{"rule_id": e.extra.get("rule_id"), "assessment": e.extra.get("assessment"),
                                 "t_start": e.t_start, "t_end": e.t_end, "t_peak": e.t_peak,
                                 "confidence": e.confidence} for e in g]

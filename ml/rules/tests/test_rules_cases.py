@@ -34,8 +34,18 @@ def test_rules_yaml_valid_and_documented() -> None:
 def test_observation_kinds_never_violation() -> None:
     by_id = {r.id: r for r in CFG.rules}
     for rid in ("V04_door_open_with_valuables", "V05_phone_in_hand_at_workplace", "V05_phone_to_ear",
-                "V06_eating_drinking", "V08_hands_hidden_with_cash", "V08_counting_facing_away"):
+                "V06_eating_drinking"):
         assert by_id[rid].kind == "observation", rid
+
+
+def test_v08_checks_client_presence_not_posture() -> None:
+    """V08 (A13: пересчёт не в присутствии клиента) — не «спиной к камере» и не «руки перекрыты»."""
+    v08 = [r for r in CFG.rules if r.type_id == "V08"]
+    assert v08, "нет правила V08"
+    for r in v08:
+        assert "client_present" in r.names, r.id
+        assert not ({"hands_hidden", "cashier_facing_away"} & set(r.names)), r.id
+        assert not r.enabled and r.status_reason
 
 
 @pytest.mark.parametrize("rule_id", sorted(RULE_CASES))
