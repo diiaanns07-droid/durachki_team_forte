@@ -1,0 +1,10 @@
+# AUTO-GENERATED: deploy/merge_requirements.py — не редактировать руками.
+# Профиль: gpu; источников: 2; конфликтов: 0.
+# Точные версии и хэши — ТОЛЬКО в deploy/locks/<target>.lock.txt (uv pip compile).
+# источник: deploy/platform.in
+# источник: deploy/requirements.txt
+
+huggingface-hub>=0.25  # deploy/requirements.txt
+packaging>=23  # deploy/requirements.txt
+psutil>=5.9  # deploy/requirements.txt
+pyyaml>=6.0  # deploy/requirements.txt
