@@ -185,10 +185,10 @@ def clip_polygon_unit(poly: Sequence[Sequence[float]]) -> list[Point]:
             break
         inp, out = out, []
 
-        def inside(p: Point) -> bool:
+        def inside(p: Point, axis: int = axis, bound: float = bound, keep_ge: bool = keep_ge) -> bool:
             return p[axis] >= bound if keep_ge else p[axis] <= bound
 
-        def inter(p: Point, q: Point) -> Point:
+        def inter(p: Point, q: Point, axis: int = axis, bound: float = bound) -> Point:
             t = (bound - p[axis]) / ((q[axis] - p[axis]) or 1e-12)
             r = (p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1]))
             return (bound, r[1]) if axis == 0 else (r[0], bound)

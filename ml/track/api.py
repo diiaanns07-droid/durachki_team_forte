@@ -263,7 +263,7 @@ def track_full(clip: Any, dets: Sequence[Any], cfg: Optional[dict] = None,
             app[m.tid] = mm / (mm.sum() + 1e-9)
         person_tl.append(m)
     obj_tl = []
-    for g, tls in tracklets.items():
+    for tls in tracklets.values():
         for ch in stitch_static(tls, sc):
             obj_tl.append(merge_chain(ch))
 
@@ -338,7 +338,7 @@ def track_full(clip: Any, dets: Sequence[Any], cfg: Optional[dict] = None,
                     if isinstance(ref, dict):
                         ref["track_id"] = nid
                     else:
-                        setattr(ref, "track_id", nid)
+                        ref.track_id = nid
                 except Exception:
                     pass
     info["n_tracks"] = {"person": len(pviews), "object": len(oviews)}

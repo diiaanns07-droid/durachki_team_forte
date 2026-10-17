@@ -304,7 +304,7 @@ class TrackQueries:
         if in_intervals(t, self.vis):
             return Answer(None, 0.0, "visibility_loss")
         vis_ids, unk_ids, lq = [], [], 0
-        for tr, b, role in self._people_at(t):
+        for tr, _b, role in self._people_at(t):
             if self._low_quality(tr):
                 lq += 1
                 continue

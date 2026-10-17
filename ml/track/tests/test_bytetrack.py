@@ -64,7 +64,7 @@ def test_two_crossing_people_no_swap():
     sc = S.Scene(14.0, [a, b], [])
     clip, dets, gt = S.make(sc, seed=2)
     track_full(clip, dets)
-    for key, start_x, end_x in (("a", 0.15, 0.85), ("b", 0.85, 0.15)):
+    for key, _start_x, _end_x in (("a", 0.15, 0.85), ("b", 0.85, 0.15)):
         mine = [d for d in dets if id(d) in gt and gt[id(d)]["key"] == key]
         first, last = mine[0].track_id, mine[-1].track_id
         assert first == last, f"{key}: id switched {first}->{last}"
