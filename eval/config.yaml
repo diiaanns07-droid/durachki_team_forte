@@ -1,0 +1,107 @@
+# Kassa Sentinel — eval/config.yaml (владелец A16).
+# Все пороги оценки вынесены сюда. Можно переопределить: --config путь.yaml
+
+# --- Локализация ---
+hit_windows_s: [0.5, 1.0, 2.0, 3.0]   # hit@k: |Δt| ближайшего нарушения до GT ≤ k
+evidence_tol_s: 1.0                    # кадр-доказательство должен быть в ±1 с от GT
+early_late_tol_s: 2.0                  # |Δt| больше — категория «рано»/«поздно»
+type_match_window_s: 3.0               # окно сопоставления GT(t,type) ↔ предсказанное нарушение
+match_window_s: 5.0                    # one-to-one сопоставление нарушение ↔ GT-событие (не меньше max(hit_windows_s))
+dedupe_groups: true                    # дубликаты по md5/sha256 (Х-4≡Х-47) — одно видео в метриках
+conflict_policy: separate              # separate: конфликт 57/68 — отдельным блоком, не в основных метриках локализации
+                                       # alternatives: одно событие с альтернативами [57, 68] (вторая сводка — localization_alt)
+dataset:
+  evaluation_kind: exploratory         # все 42 видео уже использованы в разведке → НЕ независимый тест
+coverage:
+  min: null                            # null → порог A01 (contracts/config.yaml: min_ratio_for_no_violation, 0.98)
+  require: true                        # канон A01: no_violation без meta.coverage не подтверждён → partial (не «чисто»)
+# Конфликт таймкодов в группе дубликатов (57 / 68 с) НЕ решаем выбором: одно событие с альтернативами
+# [57, 68]; метрики локализации дополнительно считаются без конфликтных групп (localization_no_conflict).
+# Конфликт МЕТОК (нарушение / без нарушения) → группа исключается из бинарных метрик (label_conflict_ids).
+max_evidence_frames: 3                 # по ТЗ 1–3 кадра на нарушение
+
+# --- Латентность / SLA (RTX 4060 Laptop) ---
+latency:
+  sla_s: 60.0              # ≤ 60 с на видео 145 с
+  ref_duration_s: 145.0    # SLA масштабируется пропорционально длине: sla_s * max(1, dur/ref)... см. README
+  scale_with_duration: false
+  batch_sla_s: 300.0       # жюри: 5+ видео сразу, ≤ 5 минут до результата
+
+# --- Нормы ---
+norms:
+  allowed_url_prefixes: ["https://adilet.zan.kz/", "http://adilet.zan.kz/"]
+  catalog_path: norms/catalog.yaml     # используется, если norms.load_catalog() недоступен
+  review_path: data/norms_review.csv   # ручная экспертиза трактовки: type_id,url,clause,correct(1/0)
+
+# --- Язык описаний (правило 4: только наблюдаемые факты) ---
+language:
+  hedge_markers: ["признаки возможного нарушения", "возможного нарушения", "возможное нарушение"]
+  forbidden: ["украл", "хищен", "мошенн", "умышлен", "умысел", "намеренно", "поддел", "фальшив",
+              "недостач", "подлинн", "сумма составляет", "преступлен", "виновен", "виновн"]
+
+# --- НАШ proxy-балл 0..100 (формула жюри неизвестна; решения — по scorecard). Формулы — в README ---
+jury:
+  weights:
+    detection: 25
+    timecode: 15
+    type: 15
+    norms: 15
+    robustness: 10
+    product: 10
+    architecture: 10
+  fn_cost: 2.0             # пропуск нарушения дороже ложного срабатывания
+  fp_cost: 1.0
+  time_part: 0.667         # доля «Таймкод + кадр» на таймкод (остальное — кадр в ±evidence_tol_s)
+  time_steps:              # [порог |Δt|, доля балла] — ступенчатая шкала
+    - [1.0, 1.0]
+    - [2.0, 0.75]
+    - [3.0, 0.5]
+    - [5.0, 0.25]
+  # Компоненты без данных: null → исключить и перенормировать на 100; число → фиксированная доля 0..1
+  defaults:
+    robustness: null
+    product: null
+    architecture: null
+
+# --- Прогон пайплайна ---
+runner:
+  # CLI пайплайна (A03). {python} {videos} {out} {raw_flag} подставляются.
+  cli_cmd: ["{python}", "-m", "backend.pipeline", "batch", "{videos}", "--out", "{out}"]
+  cli_raw_flag: null       # у A03 `batch` нет флага --raw: scores_raw A12 и так всегда кладёт в meta
+  cli_timeout_s: 7200
+  api_poll_s: 2.0
+  api_timeout_s: 600
+  deadline_s: 240.0        # для inproc: backend.pipeline.run(..., deadline_s)
+  raw_env: {SENTINEL_RAW_SCORES: "1"}
+  video_exts: [".mov", ".mp4", ".m4v", ".avi", ".mkv"]
+
+# --- Стресс-тест ракурса / качества ---
+robustness:
+  default_set: [persp_left, persp_right, rot_p10, rot_m20, zoom80, mirror, bright_p30, bright_m30, blur, h264_crf32, fps25,
+                landscape_rot90, landscape_pad, rotmeta90, vfr_drop]
+  crf: 20
+  shift_tol_s: 2.0
+
+# --- Имитация жюри ---
+jury_sim:
+  n_videos: 6
+  min_sequential: 5          # приёмка: 5+ видео ПОСЛЕДОВАТЕЛЬНО, затем ограниченная пачка
+  poll_s: 2.0
+  total_limit_s: 300.0       # от приёма каждого job, включая очередь
+  grace_s: 60                # сколько ждать сверх лимита, чтобы отличить «медленно» от «не завершено»
+  cloudflare_timeout_s: 100  # таймаут запроса Cloudflare Tunnel: загрузка дольше — FAIL, ≥60% — WARN
+  big_file_mb: 150
+  request_timeout_s: 120
+
+# --- Санити-полы и утечки (eval.sanity) ---
+sanity:
+  duration_corr_warn: 0.3   # |ρ Спирмена| скора с длительностью/номером файла ≥ порога → предупреждение
+
+# --- Абляции (eval.ablate): кандидат vs baseline на ОДНИХ И ТЕХ ЖЕ входах ---
+ablate:
+  fp_tolerance_abs: 1        # рост FP больше max(abs, rel·N) — не PASS, даже если recall вырос
+  fp_tolerance_rel: 0.05
+  min_hit2_gain: 0.05        # «значимый» рост hit@2 (доля событий)
+  latency_regress_rel: 0.20  # рост p90 латентности > 20% — регресс
+  vram_budget_mb: 7500       # пик VRAM выше — FAIL (8 ГБ карта, нужен запас)
+  sla_p90_s: 60.0

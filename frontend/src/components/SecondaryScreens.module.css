@@ -1,0 +1,515 @@
+/* U10 — стили второстепенных экранов: SettingsDialog, AboutScreen.
+ * Визуальный язык стартовой сцены (UploadScreen): ink/brand, тонкая сетка с маской, мягкое свечение brand,
+ * скругление 24px, тонкие линии. Глобальные стили и общие компоненты — у U01; здесь только свои классы.
+ * Цвета продублированы из tailwind.config.js (ink/brand), чтобы модуль не зависел от порядка @apply.
+ */
+
+/* ---------- диалог настроек ---------- */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0;
+  background: rgb(10 15 29 / 0.6);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+
+.panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: calc(100vh - 12px);
+  max-height: calc(100dvh - 12px);
+  overflow: hidden;
+  border: 1px solid rgb(226 232 240 / 0.8);
+  border-bottom: 0;
+  border-radius: 24px 24px 0 0;
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 10px 40px -12px rgb(16 24 40 / 0.25);
+  animation: panelIn 0.28s ease-out backwards;
+}
+:global(.dark) .panel {
+  border-color: rgb(255 255 255 / 0.07);
+  background: #121a2e;
+  color: #e2e8f0;
+}
+
+@media (min-width: 640px) {
+  .backdrop {
+    align-items: center;
+    padding: 24px;
+  }
+  .panel {
+    max-width: 36rem;
+    max-height: min(46rem, calc(100dvh - 48px));
+    border-bottom: 1px solid rgb(226 232 240 / 0.8);
+    border-radius: 24px;
+  }
+  :global(.dark) .panel {
+    border-bottom-color: rgb(255 255 255 / 0.07);
+  }
+}
+
+@keyframes panelIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Шапка: сетка и свечение — как у стартовой сцены */
+.head {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid rgb(226 232 240 / 0.8);
+}
+:global(.dark) .head {
+  border-bottom-color: rgb(255 255 255 / 0.06);
+}
+.head::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgb(15 23 42 / 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(15 23 42 / 0.05) 1px, transparent 1px);
+  background-size: 28px 28px;
+  -webkit-mask-image: radial-gradient(ellipse at top right, #000, transparent 70%);
+  mask-image: radial-gradient(ellipse at top right, #000, transparent 70%);
+}
+:global(.dark) .head::before {
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.04) 1px, transparent 1px);
+}
+.head::after {
+  content: "";
+  position: absolute;
+  right: -64px;
+  top: -80px;
+  width: 200px;
+  height: 200px;
+  border-radius: 9999px;
+  background: rgb(184 67 110 / 0.1);
+  filter: blur(40px);
+  pointer-events: none;
+}
+.headInner {
+  position: relative;
+  z-index: 1;
+}
+
+/* Прокручиваемое тело: на маленьком экране листается, шапка и действия остаются на месте */
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px 20px 20px;
+  scrollbar-width: thin;
+}
+
+.foot {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 12px;
+  padding: 12px 20px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  border-top: 1px solid rgb(226 232 240 / 0.8);
+  background: rgb(248 250 252 / 0.85);
+}
+:global(.dark) .foot {
+  border-top-color: rgb(255 255 255 / 0.06);
+  background: rgb(10 15 29 / 0.55);
+}
+.footActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+}
+@media (min-width: 480px) {
+  .footActions {
+    display: flex;
+    width: auto;
+    margin-left: auto;
+  }
+}
+.footActions > button {
+  min-height: 44px;
+}
+
+@media (min-width: 640px) {
+  .head {
+    padding: 22px 24px 18px;
+  }
+  .body {
+    padding: 20px 24px 24px;
+  }
+  .foot {
+    padding: 14px 24px;
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+  }
+}
+
+/* Группы полей */
+.group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.group + .group {
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid rgb(226 232 240 / 0.8);
+}
+:global(.dark) .group + .group {
+  border-top-color: rgb(255 255 255 / 0.06);
+}
+/* float: legend ведёт себя как обычный блок — линия группы идёт над ней, а не сквозь неё */
+.legend {
+  float: left;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  margin-bottom: 4px;
+  font-family: "Manrope Variable", Manrope, "Inter Variable", system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.legendIcon {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: #fbf3f6;
+  color: #9e2c56;
+}
+:global(.dark) .legendIcon {
+  background: rgb(184 67 110 / 0.14);
+  color: #e09db6;
+}
+.legend + * {
+  clear: both;
+}
+.groupLead {
+  margin: 0 0 12px 36px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #64748b;
+}
+@media (max-width: 400px) {
+  .groupLead {
+    margin-left: 0;
+  }
+}
+
+.field + .field {
+  margin-top: 14px;
+}
+.fieldLabel {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.hint {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #64748b;
+}
+:global(.dark) .hint,
+:global(.dark) .groupLead {
+  color: #94a3b8;
+}
+.error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: #be123c;
+}
+:global(.dark) .error {
+  color: #fda4af;
+}
+.inputInvalid {
+  border-color: #e11d48 !important;
+}
+
+/* Статус подключения и ключа */
+.status {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid;
+  border-radius: 14px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.status svg {
+  flex: none;
+  margin-top: 2px;
+}
+.toneOk {
+  border-color: #a7f3d0;
+  background: #ecfdf5;
+  color: #065f46;
+}
+.toneWarn {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #78350f;
+}
+.toneError {
+  border-color: #fecdd3;
+  background: #fff1f2;
+  color: #9f1239;
+}
+.toneNeutral {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #334155;
+}
+:global(.dark) .toneOk {
+  border-color: rgb(52 211 153 / 0.25);
+  background: rgb(52 211 153 / 0.08);
+  color: #a7f3d0;
+}
+:global(.dark) .toneWarn {
+  border-color: rgb(251 191 36 / 0.25);
+  background: rgb(251 191 36 / 0.08);
+  color: #fde68a;
+}
+:global(.dark) .toneError {
+  border-color: rgb(251 113 133 / 0.3);
+  background: rgb(251 113 133 / 0.08);
+  color: #fecdd3;
+}
+:global(.dark) .toneNeutral {
+  border-color: rgb(255 255 255 / 0.1);
+  background: rgb(255 255 255 / 0.03);
+  color: #cbd5e1;
+}
+
+.keyRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.keyRow .status {
+  flex: 1 1 14rem;
+}
+.smallBtn {
+  min-height: 40px;
+  padding: 8px 12px;
+}
+
+.confirm {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid #fecdd3;
+  border-radius: 14px;
+  background: #fff1f2;
+  font-size: 13px;
+  color: #881337;
+}
+:global(.dark) .confirm {
+  border-color: rgb(251 113 133 / 0.3);
+  background: rgb(251 113 133 / 0.08);
+  color: #fecdd3;
+}
+
+.saveNote {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+}
+.saveNoteDirty {
+  color: #9e2c56;
+}
+:global(.dark) .saveNoteDirty {
+  color: #e09db6;
+}
+
+/* Видимый фокус внутри прокручиваемого тела не обрезается краем контейнера */
+.panel :focus-visible {
+  outline: 2px solid #b8436e;
+  outline-offset: 2px;
+}
+
+/* ---------- «О системе» ---------- */
+.hero {
+  position: relative;
+  overflow: hidden;
+}
+.heroGrid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgb(15 23 42 / 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(15 23 42 / 0.05) 1px, transparent 1px);
+  background-size: 28px 28px;
+  -webkit-mask-image: radial-gradient(ellipse at top right, #000, transparent 70%);
+  mask-image: radial-gradient(ellipse at top right, #000, transparent 70%);
+}
+:global(.dark) .heroGrid {
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.04) 1px, transparent 1px);
+}
+.heroGlow {
+  position: absolute;
+  right: -96px;
+  top: -96px;
+  width: 288px;
+  height: 288px;
+  border-radius: 9999px;
+  background: rgb(184 67 110 / 0.1);
+  filter: blur(64px);
+  pointer-events: none;
+}
+
+/* Шаги анализа: вертикальная линия на телефоне, номера в кружках — характер линий стартовой сцены */
+.steps {
+  position: relative;
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.step {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgb(226 232 240 / 0.8);
+  border-radius: 16px;
+  background: #fff;
+}
+:global(.dark) .step {
+  border-color: rgb(255 255 255 / 0.07);
+  background: rgb(255 255 255 / 0.02);
+}
+.stepNum {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: #121a2e;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+:global(.dark) .stepNum {
+  background: #fff;
+  color: #121a2e;
+}
+.stepOptional {
+  border-style: dashed;
+}
+@media (max-width: 767px) {
+  .steps::before {
+    content: "";
+    position: absolute;
+    left: 28px;
+    top: 20px;
+    bottom: 20px;
+    width: 1px;
+    background: linear-gradient(to bottom, #e09db6, rgb(226 232 240 / 0.8));
+  }
+  :global(.dark) .steps::before {
+    background: linear-gradient(to bottom, rgb(224 157 182 / 0.5), rgb(255 255 255 / 0.08));
+  }
+  .step {
+    z-index: 1;
+  }
+}
+@media (min-width: 768px) {
+  .steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1200px) {
+  .steps {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.limit {
+  display: flex;
+  gap: 10px;
+  padding: 12px 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.limit + .limit {
+  border-top: 1px solid rgb(226 232 240 / 0.8);
+}
+:global(.dark) .limit + .limit {
+  border-top-color: rgb(255 255 255 / 0.06);
+}
+.limit svg {
+  flex: none;
+  margin-top: 3px;
+}
+
+.code {
+  min-width: 0;
+  border-radius: 16px;
+  background: #0a0f1d;
+  color: #f1f5f9;
+  padding: 14px 16px;
+}
+.code pre {
+  margin: 0;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  scrollbar-width: thin;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel {
+    animation: none;
+  }
+}
