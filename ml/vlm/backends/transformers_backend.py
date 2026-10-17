@@ -383,7 +383,7 @@ class TransformersBackend(VLMBackend):
             mode, ids = self._option_token_ids(options)
             if mode == "letters":  # варианты неразличимы по первому токену — просим букву
                 legend = "; ".join(f"{chr(ord('A') + j)} — {forms[0]}" for j, (k, forms) in enumerate(options.items()))
-                prompt = f"{prompt}\nОтветь одной буквой: {legend}."
+                prompt = f"{prompt}\nВместо слова ответь одной буквой: {legend}."
             inputs = self._inputs(self._messages(images, system, prompt))
             with torch.inference_mode():
                 try:

@@ -87,11 +87,13 @@ def load_candidates(path: str) -> dict[str, dict[str, Any]]:
 
 
 def _verdict(clip: Any, events_fusion: list[Any], events_plain: list[Any], risk: list[Any], threshold: float,
-             catalog: Optional[dict]) -> dict[str, Any]:
+             catalog: Optional[dict], how: str = "auto") -> dict[str, Any]:
     """Вердикт как в продукте: ml.fusion.fuse (A12) на всех событиях, как их отдаёт A03 (кандидаты + проверенные
     копии). Без fusion — max confidence >= threshold по кандидатам, заменённым проверенными копиями.
     verdict=None (анализ неполный/упал) — это «неизвестно», а не no_violation."""
     try:
+        if how == "threshold":
+            raise ImportError("verdict=threshold")
         from ml.fusion import fuse  # type: ignore
 
         try:
@@ -104,6 +106,8 @@ def _verdict(clip: Any, events_fusion: list[Any], events_plain: list[Any], risk:
             logging.getLogger(__name__).warning("fusion failed: %s", type(e).__name__)
             by = "threshold_after_fusion_error"
     except ImportError:
+        if how == "fusion":
+            raise
         by = "threshold"
     top = max(events_plain, key=lambda e: float(e.confidence), default=None)
     is_v = top is not None and float(top.confidence) >= threshold
@@ -112,7 +116,7 @@ def _verdict(clip: Any, events_fusion: list[Any], events_plain: list[Any], risk:
 
 
 def _run_mode(mode: str, clip: Any, cand: dict[str, Any], budget_s: float, cfg: dict[str, Any], backend: Any,
-              catalog: Optional[dict], threshold: float, dump: Any) -> dict[str, Any]:
+              catalog: Optional[dict], threshold: float, dump: Any, how: str = "auto") -> dict[str, Any]:
     from .discoverer import discover_events
     from .verifier import coverage, verify_events
 
@@ -141,7 +145,7 @@ def _run_mode(mode: str, clip: Any, cand: dict[str, Any], budget_s: float, cfg: 
         if found:
             info["vlm_calls"] += int((found[0].extra["vlm"].get("budget") or {}).get("calls") or 0)
     vlm_s = time.perf_counter() - t0
-    out = _verdict(clip, base + added, plain, cand.get("risk") or [], threshold, catalog)
+    out = _verdict(clip, base + added, plain, cand.get("risk") or [], threshold, catalog, how)
     out.update(info)
     out["vlm_s"] = round(vlm_s, 3)
     return out
@@ -158,13 +162,24 @@ def _vram_peak_mb() -> Optional[float]:
     return None
 
 
+_DEFINITE = ("violation", "no_violation")
+
+
 def summarize(rows: list[dict[str, Any]], modes: list[str]) -> dict[str, Any]:
-    """Агрегаты по режимам + исправленные/созданные ошибки относительно режима none."""
-    summary: dict[str, Any] = {}
+    """Агрегаты по режимам + исправленные/созданные ошибки относительно режима none.
+
+    Режимы сравниваются на ОДНОМ наборе роликов: тех, где вердикт определён во всех запрошенных режимах
+    (common). Ролики с неопределённым вердиктом хотя бы в одном режиме считаются отдельно (unknown_verdicts)
+    и не превращаются в «нарушений нет». Самопроверка: tp_m - tp_none == fn_fixed - fn_created и
+    fp_m - fp_none == fp_created - fp_fixed (на common) -> vs_none.consistent.
+    """
+    rows_m = [r for r in rows if all(m in r["modes"] for m in modes)]
+    common = [r for r in rows_m if all(r["modes"][m]["verdict"] in _DEFINITE for m in modes)]
+    summary: dict[str, Any] = {"_common": {"videos_total": len(rows), "videos_compared": len(common),
+                                           "excluded_unknown": len(rows_m) - len(common)}}
     for m in modes:
-        all_rs = [r for r in rows if m in r["modes"]]
-        rs = [r for r in all_rs if r["modes"][m]["verdict"] in ("violation", "no_violation")]
-        unknown = len(all_rs) - len(rs)  # неполный анализ не засчитывается как «нарушений нет»
+        unknown = sum(r["modes"][m]["verdict"] not in _DEFINITE for r in rows_m)
+        rs = common
         tp = sum(r["gt"] and r["modes"][m]["verdict"] == "violation" for r in rs)
         fn = sum(r["gt"] and r["modes"][m]["verdict"] != "violation" for r in rs)
         fp = sum((not r["gt"]) and r["modes"][m]["verdict"] == "violation" for r in rs)
@@ -172,7 +187,7 @@ def summarize(rows: list[dict[str, Any]], modes: list[str]) -> dict[str, Any]:
         dts = [abs(r["modes"][m]["t"] - r["t_gt"]) for r in rs
                if r["gt"] and r["t_gt"] is not None and not r.get("t_conflict")
                and r["modes"][m]["verdict"] == "violation" and r["modes"][m]["t"] is not None]
-        lat = [r["modes"][m]["vlm_s"] for r in rs]
+        lat = [r["modes"][m]["vlm_s"] for r in rows_m]  # стоимость — по всем роликам режима
         types: dict[str, int] = {}
         for r in rs:
             if r["modes"][m]["verdict"] == "violation":
@@ -189,19 +204,26 @@ def summarize(rows: list[dict[str, Any]], modes: list[str]) -> dict[str, Any]:
              "vlm_s_mean": round(statistics.mean(lat), 3) if lat else None,
              "vlm_s_p95": round(sorted(lat)[max(0, int(round(0.95 * (len(lat) - 1))))], 3) if lat else None,
              "vlm_s_max": round(max(lat), 3) if lat else None,
-             "vlm_calls_total": sum(r["modes"][m].get("vlm_calls", 0) for r in rs),
-             "coverage_incomplete_videos": sum(not r["modes"][m].get("coverage_complete", True) for r in rs),
-             "verdict_by": sorted({r["modes"][m].get("by") for r in rs})}
-        if m != "none" and "none" in modes:
-            pairs = [(r["gt"], r["modes"]["none"]["verdict"] == "violation", r["modes"][m]["verdict"] == "violation")
-                     for r in rs if "none" in r["modes"] and r["modes"]["none"]["verdict"] in ("violation", "no_violation")]
-            s["vs_none"] = {
-                "fp_fixed": sum((not g) and b and not v for g, b, v in pairs),
-                "fn_fixed": sum(g and (not b) and v for g, b, v in pairs),
-                "fp_created": sum((not g) and (not b) and v for g, b, v in pairs),
-                "fn_created": sum(g and b and not v for g, b, v in pairs),
-            }
+             "vlm_calls_total": sum(r["modes"][m].get("vlm_calls", 0) for r in rows_m),
+             "coverage_incomplete_videos": sum(not r["modes"][m].get("coverage_complete", True) for r in rows_m),
+             "verdict_by": sorted({str(r["modes"][m].get("by")) for r in rows_m})}
         summary[m] = s
+    if "none" in modes:
+        base = summary["none"]
+        for m in modes:
+            if m == "none":
+                continue
+            pairs = [(r["gt"], r["modes"]["none"]["verdict"] == "violation", r["modes"][m]["verdict"] == "violation")
+                     for r in common]
+            vs = {"fp_fixed": sum((not g) and b and not v for g, b, v in pairs),
+                  "fn_fixed": sum(g and (not b) and v for g, b, v in pairs),
+                  "fp_created": sum((not g) and (not b) and v for g, b, v in pairs),
+                  "fn_created": sum(g and b and not v for g, b, v in pairs)}
+            s = summary[m]
+            vs["consistent"] = (s["tp"] - base["tp"] == vs["fn_fixed"] - vs["fn_created"]
+                                and s["fp"] - base["fp"] == vs["fp_created"] - vs["fp_fixed"]
+                                and s["n"] == base["n"])
+            s["vs_none"] = vs
     return summary
 
 
@@ -213,6 +235,8 @@ def run(argv: Optional[list[str]] = None) -> dict[str, Any]:
     ap.add_argument("--modes", default="none,json,qa")
     ap.add_argument("--budget", type=float, default=30.0, help="бюджет VLM на ролик, с (как даёт A03)")
     ap.add_argument("--threshold", type=float, default=0.5, help="порог вердикта, если ml.fusion недоступен")
+    ap.add_argument("--verdict", choices=["auto", "fusion", "threshold"], default="auto",
+                    help="auto: ml.fusion, если есть (как в продукте); threshold: чистый эффект VLM без гейтов fusion")
     ap.add_argument("--max-videos", type=int, default=0)
     ap.add_argument("--backend", default=None)
     ap.add_argument("--config", default=None)
@@ -230,7 +254,7 @@ def run(argv: Optional[list[str]] = None) -> dict[str, Any]:
 
     modes = [m.strip() for m in args.modes.split(",") if m.strip() in MODES]
     cfg = load_config(args.config, overrides={"backend": args.backend} if args.backend else None)
-    rep: dict[str, Any] = {"modes": modes, "budget_s": args.budget,
+    rep: dict[str, Any] = {"modes": modes, "budget_s": args.budget, "verdict_how": args.verdict,
                            "note": "разведочная оценка на уже использованных роликах — не независимый тест"}
     be = None
     if any(m != "none" for m in modes):
@@ -280,7 +304,7 @@ def run(argv: Optional[list[str]] = None) -> dict[str, Any]:
                                "n_candidates": len(cands[key]["events"]), "modes": {}, "_md5": h}
         for m in modes:
             row["modes"][m] = _run_mode(m, clip, cands[key], args.budget, cfg, be, catalog, args.threshold,
-                                        dump if m != "none" else None)
+                                        dump if m != "none" else None, args.verdict)
         rows.append(row)
         close = getattr(clip, "close", None)
         if callable(close):

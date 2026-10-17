@@ -20,7 +20,7 @@ from typing import Any, Callable, Optional
 from ._contract import Event
 from .backends import VLMBackend
 from .budget import Budget, visual_tokens
-from .frames import get_frame, resize_max_side, to_pil_rgb
+from .frames import get_frame_ts, resize_max_side, to_pil_rgb
 from .runtime import gpu_guard
 
 log = logging.getLogger(__name__)
@@ -229,7 +229,7 @@ def transition_time(answers: Answers, times: dict[str, float]) -> Optional[float
         if not opts or at not in times:
             continue
         by_q.setdefault(q, []).append((times[at], max(opts, key=opts.get)))
-    for q, seq in by_q.items():
+    for seq in by_q.values():
         seq.sort()
         for (t1, a1), (t2, a2) in zip(seq, seq[1:]):
             if a1 != a2:
@@ -292,6 +292,7 @@ def qa_verify_event(clip: Any, ev: Event, be: VLMBackend, budget: Budget, cfg: d
              for k, v in offsets.items()}
     min_mass = float((spec.get("decision") or {}).get("min_mass", 0.2))
     frames_cache: dict[str, Any] = {}
+    used_times: dict[str, float] = {}  # только кадры, реально показанные модели, с фактическим PTS
     answers: Answers = {}
     asked = skipped = low_mass = 0
     crops_used = 0
@@ -300,8 +301,13 @@ def qa_verify_event(clip: Any, ev: Event, be: VLMBackend, budget: Budget, cfg: d
         if q not in (spec.get("questions") or {}) or at not in times:
             continue
         if at not in frames_cache:
-            frames_cache[at] = get_frame(clip, times[at])
+            f0, ts = get_frame_ts(clip, times[at])
+            frames_cache[at] = f0
+            if ts is not None:
+                times[at] = round(ts, 4)  # время — фактический PTS показанного кадра
         f = frames_cache[at]
+        if f is not None:
+            used_times[at] = times[at]
         if f is None:
             skipped += 1
             continue
@@ -343,9 +349,10 @@ def qa_verify_event(clip: Any, ev: Event, be: VLMBackend, budget: Budget, cfg: d
             continue
         answers[(q, at)] = {**{k: float(v) for k, v in sc.probs.items()}, "_mass": float(sc.mass)}
     if asked == 0:
-        return {"status": "skipped_budget" if skipped else "no_frames", "answers": {}, "times": times}
+        return {"status": "skipped_budget" if skipped else "no_frames", "answers": {}, "times": used_times}
     dec = decide(ev.type_id, answers, spec)
-    pro, con = facts_from_answers(answers, times, spec)
-    return {"status": "ok", "answers": answers, "times": times, "decision": dec, "facts_pro": pro,
-            "facts_con": con, "t_transition": transition_time(answers, times), "asked": asked, "skipped": skipped,
+    pro, con = facts_from_answers(answers, used_times, spec)
+    return {"status": "ok", "answers": answers, "times": used_times, "decision": dec, "facts_pro": pro,
+            "facts_con": con, "t_transition": transition_time(answers, used_times), "asked": asked,
+            "skipped": skipped,
             "low_mass": low_mass, "crops_used": crops_used, "latency_s": round(lat, 3), "spec_version": spec.get("version")}

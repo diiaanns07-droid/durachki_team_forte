@@ -120,3 +120,59 @@ def test_analysis_uses_same_backend_instance(clip):
     service.chat([{"role": "user", "content": "x"}])
     kinds = [c.get("kind", "generate") for c in be.calls]
     assert "chat" in kinds and "generate" in kinds  # один экземпляр модели на процесс
+
+
+def _a14_call(fn, messages, *, max_tokens=64, temperature=0.2, remaining=5.0, wait_s=10.0):
+    """Повтор соглашения A14 (copilot/llm.py VLMServiceBackend.stream_chat @2055fc4): параметры по сигнатуре."""
+    import inspect
+    params = inspect.signature(fn).parameters
+    varkw = any(p.kind == p.VAR_KEYWORD for p in params.values())
+    accepts = lambda n: varkw or n in params
+    kwargs = {"messages": list(messages)} if accepts("messages") else {}
+    for name, value in (("max_new_tokens", int(max_tokens)), ("timeout_s", remaining),
+                        ("temperature", float(temperature)), ("priority", "low"),
+                        ("wait_s", min(remaining, wait_s))):
+        if accepts(name):
+            kwargs[name] = value
+    res = fn(**kwargs)
+    return (str(getattr(res, "text", "") or ""), bool(getattr(res, "timed_out", False)),
+            str(getattr(res, "error", "") or ""))
+
+
+def test_a14_calling_convention_and_priority_kwarg():
+    runtime.set_backend(MockBackend())
+    text, timed_out, error = _a14_call(service.chat, [{"role": "user", "content": "Вопрос"}])
+    assert text.startswith("[mock]") and not timed_out and error == ""  # priority="low" не роняет вызов
+
+
+def test_a14_sees_timeout_and_busy():
+    from ml.vlm.budget import FakeClock
+    runtime.set_backend(MockBackend(latency_s=5.0, clock=FakeClock()))
+    text, timed_out, error = _a14_call(service.chat, [{"role": "user", "content": "x"}], remaining=1.0)
+    assert text == "" and timed_out and error == "timeout"  # A14 -> LLMTimeout
+    runtime.set_backend(MockBackend())
+    entered, release = threading.Event(), threading.Event()
+
+    def analysis():
+        with gpu.guard(gpu.PRIO_ANALYSIS):
+            entered.set()
+            release.wait(2)
+
+    th = threading.Thread(target=analysis)
+    th.start()
+    entered.wait(1)
+    _t, _to, error = _a14_call(service.chat, [{"role": "user", "content": "x"}], remaining=0.05, wait_s=0.05)
+    release.set()
+    th.join(2)
+    assert "busy" in error  # A14 -> LLMBusy
+
+
+def test_available_without_loading(monkeypatch):
+    be = MockBackend()
+    runtime.set_backend(be)
+    assert service.available() == (True, "")
+    runtime.set_backend(None)
+    monkeypatch.setenv("SENTINEL_MOCK", "0")
+    monkeypatch.setenv("SENTINEL_VLM_BACKEND", "off")
+    ok, why = service.available()
+    assert not ok and why

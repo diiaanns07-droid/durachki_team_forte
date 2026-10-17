@@ -2,8 +2,10 @@
 
 Режимы (--mode, через запятую; по умолчанию json,qa,chat):
   json — промпт verify как в проде (кадры verify_n_frames с подсветкой, max side, max_new_tokens_verify, схема):
-         фактические выходные токены, finish_reason (eos|length|time), доля валидного JSON и обрезанных,
-         время: подготовка кадров + prep (шаблон/процессор) + generation + decode + parse;
+         входные кадры и токены, фактические выходные токены, finish_reason (eos|length|time), доля валидного
+         JSON (как в проде: обрезанный ответ не принимается) и обрезанных, время: подготовка кадров + prep
+         (шаблон/процессор) + generation + decode + parse;
+  discover — то же для промпта discover (frames_per_window кадров, max_new_tokens_discover) — только замер;
   qa   — вопросы qa_spec для --qa-type (forward без генерации): latency на вопрос, mass, words/letters;
   chat — ml.vlm.service.chat на нейтральном тексте (как у копилота): latency, токены, busy/ошибки.
 Холодный старт (загрузка + первый вызов) и тёплые вызовы считаются отдельно. VRAM: после загрузки, пик на
@@ -82,42 +84,74 @@ def _stats(xs: list[float]) -> dict[str, Optional[float]]:
 
 
 def _bench_json(be: Any, frames: list[Any], cfg: dict[str, Any], n: int, k: int, dump: Any) -> dict[str, Any]:
+    """Полный verify-JSON как в проде: k кадров (verify_n_frames) с подсветкой, max_new_tokens_verify, схема."""
+    return _bench_gen("verify", be, frames, cfg, n, k, dump)
+
+
+def _bench_discover(be: Any, frames: list[Any], cfg: dict[str, Any], n: int, dump: Any) -> dict[str, Any]:
+    """Полный discover-JSON как в проде (замер; сам discover в пайплайне по-прежнему выключен)."""
+    k = int((cfg.get("discover") or {}).get("frames_per_window", 4))
+    return _bench_gen("discover", be, frames, cfg, n, k, dump)
+
+
+def _bench_gen(kind: str, be: Any, frames: list[Any], cfg: dict[str, Any], n: int, k: int,
+               dump: Any) -> dict[str, Any]:
     from .catalog import catalog_types, load_catalog
     from .frames import prepare_images
-    from .parsing import extract_json, normalize_verify, verify_schema
-    from .prompting import render_verify
+    from .parsing import (discover_schema, extract_json, normalize_discover, normalize_verify,
+                          verify_schema)
+    from .prompting import render_discover, render_verify
 
     fcfg = cfg.get("frames") or {}
-    mnt = int((cfg.get("generation") or {}).get("max_new_tokens_verify", 180))
-    timeout = float((cfg.get("generation") or {}).get("call_timeout_s", 12.0))
+    gcfg = cfg.get("generation") or {}
+    mnt = int(gcfg.get("max_new_tokens_verify" if kind == "verify" else "max_new_tokens_discover",
+                       180 if kind == "verify" else 220))
+    timeout = float(gcfg.get("call_timeout_s", 12.0))
+    lang = str(cfg.get("lang", "ru"))
     allowed = sorted(catalog_types(load_catalog()))
     types = [t for t in allowed if t != "V99"] or ["V99"]
+    checklist = {kk: v for kk, v in ((cfg.get("discover") or {}).get("checklist") or {}).items() if v in allowed}
+    items = list(checklist)
     rows = []
     for i in range(max(1, n)):
         batch = [frames[(i * k + j) % len(frames)] for j in range(k)]
         times = [round(2.0 * j, 1) for j in range(k)]
         t0 = time.perf_counter()
-        imgs = prepare_images(batch, times, {"person": (0.3, 0.2, 0.7, 0.9)}, times[k // 2], fcfg)
+        if kind == "verify":
+            imgs = prepare_images(batch, times, {"person": (0.3, 0.2, 0.7, 0.9)}, times[k // 2], fcfg)
+        else:
+            imgs = prepare_images(batch, times, None, None, fcfg)
         prep_frames = time.perf_counter() - t0
-        tid = types[i % len(types)]
-        system, user = render_verify(tid, ["(синтетический кандидат для замера)"], times, None,
-                                     str(cfg.get("lang", "ru")))
-        res = be.generate(imgs, system, user, max_new_tokens=mnt, timeout_s=timeout,
-                          json_schema=verify_schema(allowed, len(times)))
+        if kind == "verify":
+            system, user = render_verify(types[i % len(types)], ["(синтетический кандидат для замера)"], times,
+                                         None, lang)
+            schema = verify_schema(allowed, len(times))
+        else:
+            system, user = render_discover(checklist, times, None, lang)
+            schema = discover_schema(items, len(times))
+        res = be.generate(imgs, system, user, max_new_tokens=mnt, timeout_s=timeout, json_schema=schema)
         t1 = time.perf_counter()
         pr = extract_json(res.text)
-        ok = pr.ok and normalize_verify(pr.data, set(allowed), len(times))[0] is not None
+        if kind == "verify":
+            parsed = pr.ok and normalize_verify(pr.data, set(allowed), len(times))[0] is not None
+        else:
+            parsed = pr.ok and normalize_discover(pr.data, items, len(times))[0] is not None
         parse_s = time.perf_counter() - t1
         tm = (res.meta or {}).get("timings") or {}
         rows.append({"total_s": prep_frames + res.latency_s + parse_s, "prep_frames_s": prep_frames,
                      "prep_s": tm.get("prep_s"), "gen_s": tm.get("gen_s"), "decode_s": tm.get("decode_s"),
                      "parse_s": parse_s, "out_tokens": res.completion_tokens, "in_tokens": res.prompt_tokens,
-                     "finish": res.finish_reason or ("time" if res.timed_out else ""), "json_ok": ok,
+                     "finish": res.finish_reason or ("time" if res.timed_out else ""),
+                     # как в проде: обрезанный ответ не принимается, даже если JSON «чинится»
+                     "json_ok": bool(parsed and not res.truncated), "parse_ok": bool(parsed),
                      "repaired": bool(pr.ok and pr.repaired), "truncated": res.truncated,
                      "vram_peak_mb": (res.meta or {}).get("vram_peak_mb"), "error": res.error})
-        dump({"kind": "bench_json", "call": i, "images": imgs, "prompt": user, "raw": [res.text],
+        dump({"kind": f"bench_{kind}", "call": i, "images": imgs, "prompt": user, "raw": [res.text],
               "finish": res.finish_reason, "error": res.error})
-    return _summ(rows)
+    out = _summ(rows)
+    out.update({"input_frames_per_call": k, "max_new_tokens": mnt, "call_timeout_s": timeout,
+                "parse_ok_rate": round(sum(r["parse_ok"] for r in rows) / len(rows), 3) if rows else None})
+    return out
 
 
 def _summ(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -161,7 +195,7 @@ def _bench_qa(be: Any, frames: list[Any], cfg: dict[str, Any], n: int, qa_type: 
     max_side = int((cfg.get("frames") or {}).get("max_side", 448))
     lat, mass, modes = [], [], {}
     for i in range(max(1, n)):
-        for j, (q, at) in enumerate(plan):
+        for j, (q, _at) in enumerate(plan):
             f = frames[(i + j) % len(frames)]
             imgs = [resize_max_side(to_pil_rgb(f), max_side)]
             if (spec["questions"][q].get("crop")):
@@ -263,6 +297,8 @@ def run(argv: Optional[list[str]] = None) -> dict[str, Any]:
         # совместимость с отчётом фазы 1
         rep["calls"] = rep["json"]["calls"]
         rep["json_valid_rate"] = rep["json"]["json_valid_rate"]
+    if "discover" in modes:
+        rep["discover"] = _bench_discover(be, frames, cfg, args.n, dump)
     if "qa" in modes:
         rep["qa"] = _bench_qa(be, frames, cfg, args.n, args.qa_type, dump)
     if "chat" in modes:

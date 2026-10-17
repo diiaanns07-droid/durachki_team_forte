@@ -117,9 +117,11 @@ class LlamaCppServerBackend(VLMBackend):
         choice = (data.get("choices") or [{}])[0]
         msg = choice.get("message") or {}
         usage = data.get("usage") or {}
+        fr = str(choice.get("finish_reason") or "")
         return GenResult(text=str(msg.get("content") or ""), latency_s=lat,
                          prompt_tokens=usage.get("prompt_tokens"), completion_tokens=usage.get("completion_tokens"),
-                         meta={"finish_reason": choice.get("finish_reason"), "timings": data.get("timings")})
+                         finish_reason={"stop": "eos", "length": "length"}.get(fr, fr),
+                         meta={"finish_reason": fr, "timings": data.get("timings")})
 
     def info(self) -> dict[str, Any]:
         return {"backend": self.name, "model": self.model_id, "url": self.url, "schema_mode": self._schema_mode}
@@ -166,7 +168,7 @@ class LlamaCppPythonBackend(VLMBackend):
             from llama_cpp import Llama
             import llama_cpp.llama_chat_format as fmt
 
-            cls = getattr(fmt, self.handler_name, None) or getattr(fmt, "Llava15ChatHandler")
+            cls = getattr(fmt, self.handler_name, None) or fmt.Llava15ChatHandler
             handler = cls(clip_model_path=self.mmproj_path, verbose=False)
             self._llm = Llama(model_path=self.model_path, chat_handler=handler, n_ctx=self.n_ctx,
                               n_gpu_layers=self.n_gpu_layers, verbose=False)

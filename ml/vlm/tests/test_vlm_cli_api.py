@@ -8,7 +8,7 @@ import pytest
 
 import ml.vlm as vlm
 from ml.vlm._contract import Event
-from ml.vlm.backends.base import GenResult, VLMBackend
+from ml.vlm.backends.base import VLMBackend
 from ml.vlm.backends.mock import MockBackend
 
 REPO = Path(__file__).resolve().parents[3]
@@ -62,7 +62,8 @@ def test_status_warmup_unload_are_technical_only():
     vlm.warmup()
     st = vlm.status()
     assert st["backend"] == "mock" and set(st) <= {"backend", "model", "reason", "url", "schema_mode", "quant",
-                                                   "loaded", "load_s", "offline", "license"}
+                                                   "loaded", "load_s", "offline", "license", "last",
+                                                   "cache_dir_set", "vram_after_load_mb"}
     vlm.unload()
 
 
@@ -186,3 +187,51 @@ def test_bench_production_sections(tmp_path, capsys):
     assert rep["qa"]["forwards"] == 3 * rep["qa"]["questions_per_candidate"] and rep["qa"]["option_mode"]
     assert rep["chat"]["ok"] == 3
     assert "Кассир" not in out and "[mock]" not in out  # тексты ответов — только в локальном дампе
+
+
+def test_status_distinguishes_disabled_and_unavailable_discover(clip, monkeypatch):
+    vlm.discover(clip, 30.0)
+    assert vlm.status()["last"]["discover"]["status"] == "disabled"
+    from ml.vlm.discoverer import discover_events
+    from ml.vlm.config import load_config
+    cfg = load_config(use_env=False, overrides={"backend": "off"})
+    discover_events(clip, 30.0, cfg=cfg, force=True)
+    last = vlm.status()["last"]["discover"]
+    assert last["status"] == "unavailable" and last["complete"] is False  # не смотрели != ничего нет
+    vlm.verify(clip, [Event("V05", 1, 2, 1.5, 0.5, "rules")], 30.0)
+    assert vlm.status()["last"]["verify"]["total"] == 1
+
+
+def test_try_cli_qa_mode(tmp_path, capsys):
+    video = _write_video(tmp_path / "synthetic.avi")
+    from ml.vlm.cli_try import main
+    main([str(video), "--t", "3", "--type", "V05", "--verify-mode", "qa", "--no-dump"])
+    rep = json.loads(capsys.readouterr().out)
+    assert rep["verify"]["mode"] == "qa" and rep["verify"]["asked"] == 2
+
+
+def test_bench_full_json_sections_report_frames_tokens_validity(tmp_path, capsys):
+    from ml.vlm.bench import main
+    main(["--synthetic", "5", "--n", "2", "--mode", "json,discover", "--no-dump"])
+    rep = json.loads(capsys.readouterr().out)
+    for sec, frames in (("json", 5), ("discover", 4)):
+        r = rep[sec]
+        assert r["input_frames_per_call"] == frames and r["max_new_tokens"] > 2  # полный JSON, не smoke
+        assert {"json_valid_rate", "parse_ok_rate", "truncated_rate", "out_tokens", "in_tokens",
+                "finish_reasons", "vram_peak_mb_max", "cold_first_call_s"} <= set(r)
+
+
+def test_bench_truncated_answer_not_counted_valid(monkeypatch, capsys):
+    from ml.vlm import runtime
+    from ml.vlm.backends.base import GenResult
+    from ml.vlm.bench import main
+
+    class Trunc(MockBackend):
+        def generate(self, images, system, prompt, **kw):
+            return GenResult(text='{"visible": true, "type_id": "V05", "confidence": 0.9, "observed_facts": ["Кас',
+                             latency_s=0.1, completion_tokens=180, finish_reason="length")
+
+    runtime.set_backend(Trunc())
+    main(["--synthetic", "5", "--n", "2", "--mode", "json", "--no-dump"])
+    r = json.loads(capsys.readouterr().out)["json"]
+    assert r["parse_ok_rate"] == 1.0 and r["json_valid_rate"] == 0.0 and r["truncated_rate"] == 1.0

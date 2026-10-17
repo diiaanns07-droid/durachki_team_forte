@@ -32,6 +32,7 @@ class ChatResult:
     error: str = ""
     finish_reason: str = ""
     truncated: bool = False
+    timed_out: bool = False        # упёрлись в timeout_s (A14 переводит в LLMTimeout)
     latency_s: float = 0.0
     wait_s: float = 0.0
     prompt_tokens: Optional[int] = None
@@ -88,7 +89,10 @@ class VLMService:
 
     def chat(self, messages: list[dict[str, Any]], *, images: Optional[list[Any]] = None,
              max_new_tokens: Optional[int] = None, timeout_s: Optional[float] = None,
-             wait_s: Optional[float] = None, temperature: float = 0.0) -> ChatResult:
+             wait_s: Optional[float] = None, temperature: float = 0.0, priority: Optional[str] = "low"
+             ) -> ChatResult:
+        """priority принимается для совместимости с A14 (priority="low"); чат ВСЕГДА ниже анализа,
+        поднять его над verify/discover нельзя."""
         from . import gpu
         from .runtime import ensure_loaded
 
@@ -121,14 +125,15 @@ class VLMService:
         except Exception as e:  # noqa: BLE001 — копилот не должен ронять процесс анализа
             log.warning("vlm chat failed: %s", type(e).__name__)
             return self._count(ChatResult(ok=False, error=type(e).__name__), "chat_error")
+        timed_out = bool(res.timed_out or res.finish_reason == "time" or res.error == "timeout")
         if res.error and not res.text:
-            return self._count(ChatResult(ok=False, error=res.error, wait_s=round(waited, 3),
+            return self._count(ChatResult(ok=False, error=res.error, wait_s=round(waited, 3), timed_out=timed_out,
                                           latency_s=round(res.latency_s, 3)), "chat_error")
         from .parsing import _THINK_RE  # убираем возможные <think>…</think>
 
         text = _THINK_RE.sub("", res.text or "").strip()
         out = ChatResult(ok=True, text=text, finish_reason=res.finish_reason, truncated=res.truncated,
-                         latency_s=round(res.latency_s, 3), wait_s=round(waited, 3),
+                         timed_out=timed_out, latency_s=round(res.latency_s, 3), wait_s=round(waited, 3),
                          prompt_tokens=res.prompt_tokens, completion_tokens=res.completion_tokens,
                          meta={"model": be.info().get("model"), "backend": be.name})
         if out.truncated:
@@ -162,8 +167,26 @@ def get_service() -> VLMService:
         return _service
 
 
-def chat(messages: list[dict[str, Any]], **kw: Any) -> ChatResult:
-    return get_service().chat(messages, **kw)
+def chat(messages: list[dict[str, Any]], *, images: Optional[list[Any]] = None,
+         max_new_tokens: Optional[int] = None, timeout_s: Optional[float] = None, wait_s: Optional[float] = None,
+         temperature: float = 0.0, priority: Optional[str] = "low") -> ChatResult:
+    """Явная сигнатура: A14 (copilot/llm.py VLMServiceBackend) передаёт только принимаемые параметры."""
+    return get_service().chat(messages, images=images, max_new_tokens=max_new_tokens, timeout_s=timeout_s,
+                              wait_s=wait_s, temperature=temperature, priority=priority)
+
+
+def available() -> tuple[bool, str]:
+    """Можно ли звать chat, БЕЗ загрузки модели (A14 проверяет перед подключением)."""
+    svc = get_service()
+    ccfg = (svc.cfg().get("service") or {}).get("chat") or {}
+    if not ccfg.get("enabled", True):
+        return False, "chat disabled in config"
+    be, reason = svc.backend()
+    if be is None:
+        return False, reason[:160]
+    if not be.loaded and not ccfg.get("allow_cold_load", True):
+        return False, "model not warm"
+    return True, ""
 
 
 def chat_request(payload: dict[str, Any]) -> dict[str, Any]:

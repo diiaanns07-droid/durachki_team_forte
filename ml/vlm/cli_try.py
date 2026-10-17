@@ -22,6 +22,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--conf", type=float, default=0.5, help="исходная уверенность кандидата")
     p.add_argument("--span", type=float, default=2.0, help="полуширина окна события, с")
     p.add_argument("--mode", choices=["verify", "discover", "both"], default="verify")
+    p.add_argument("--verify-mode", choices=["json", "qa"], default=None, help="режим verify (по умолчанию из config)")
     p.add_argument("--budget", type=float, default=60.0, help="бюджет времени стадии, с")
     p.add_argument("--backend", default=None, help="mock|transformers|llamacpp_server|llamacpp_python|auto")
     p.add_argument("--preset", default=None)
@@ -73,11 +74,14 @@ def run(argv: Optional[list[str]] = None) -> dict[str, Any]:
     if args.mode in ("verify", "both"):
         t0, t1 = max(0.0, args.t - args.span), args.t + args.span
         ev = Event(type_id=args.type, t_start=t0, t_end=t1, t_peak=args.t, confidence=args.conf, source="manual")
-        out = verify_events(clip, [ev], args.budget, cfg=cfg, backend=be, dump=dump)[0]
+        out = verify_events(clip, [ev], args.budget, cfg=cfg, backend=be, dump=dump, mode=args.verify_mode)[0]
         v = out.extra.get("vlm") or {}
-        report["verify"] = {k: v.get(k) for k in ("status", "agreement", "contradiction", "vlm_confidence",
-                                                  "p_prior", "p_post", "suggested_type_id", "t_best", "t_visible",
-                                                  "flags", "dropped_facts", "attempts", "latency_s", "repaired_json")}
+        report["verify"] = {k: v.get(k) for k in ("status", "mode", "agreement", "verdict", "score", "contradiction",
+                                                  "vlm_confidence", "p_prior", "p_post", "p_support", "p_contra",
+                                                  "evidence", "suggested_type_id", "t_best", "t_visible",
+                                                  "t_transition", "asked", "low_mass", "crops_used", "flags",
+                                                  "dropped_facts", "attempts", "latency_s", "repaired_json",
+                                                  "finish_reason", "complete")}
         report["verify"]["n_facts"] = len(v.get("facts") or [])
         report["verify"]["budget"] = v.get("budget")
         texts["verify_facts"] = v.get("facts") or []

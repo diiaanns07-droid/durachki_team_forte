@@ -18,12 +18,12 @@ from .budget import Budget, VLMLimits
 from .catalog import catalog_types, load_catalog
 from .config import load_config, preset_cfg
 from .facts_filter import filter_facts
-from .frames import clip_duration, get_frame, prepare_images, verify_times
+from .frames import clip_duration, frames_at, prepare_images, verify_times
 from .parsing import normalize_verify, regex_fallback_verify, verify_schema
 from .prompting import render_verify, retry_suffix
 from .runtime import call_json, ensure_loaded, fit_images, get_backend
 from .qa import qa_verify_event
-from .scoring import agreement as agreement_of, blend, clamp, fusion_opinion, logit, update_confidence
+from .scoring import agreement as agreement_of, blend, clamp, fusion_opinion, update_confidence
 
 log = logging.getLogger(__name__)
 
@@ -61,9 +61,16 @@ def _px_per_token(cfg: dict[str, Any]) -> int:
     return int(preset_cfg(cfg, "transformers").get("px_per_token", 28))
 
 
+# VLM спросили, но надёжного ответа нет: для fusion это «не уверен» (score 0 — не перевешивает настоящие мнения),
+# а не подтверждение/отказ; уверенность события не меняется, покрытие — неполное.
+FAILED_ANSWER_STATUSES = ("parse_failed", "truncated", "timeout", "error")
+
+
 def _mark(e: Event, status: str, **kw: Any) -> None:
     v = dict(e.extra.get("vlm") or {})
     v.update({"status": status, "agreement": v.get("agreement", "not_checked")})
+    if status in FAILED_ANSWER_STATUSES:
+        v.update({"agreement": "uncertain", "verdict": "unsure", "score": 0.0, "contradiction": False})
     v.update(kw)
     e.extra["vlm"] = v
 
@@ -146,12 +153,7 @@ def verify_events(clip: Any, events: list[Event], budget_s: float, *, cfg: Optio
                 continue
         times = verify_times(ev.t_start, ev.t_end, ev.t_peak, duration, n_frames,
                              float(fcfg.get("verify_pad_s", 1.0)), float(fcfg.get("verify_max_span_s", 12.0)))
-        frames, ftimes = [], []
-        for t in times:
-            f = get_frame(clip, t)
-            if f is not None:
-                frames.append(f)
-                ftimes.append(t)
+        frames, ftimes = frames_at(clip, times)  # фактические PTS кадров, без дублей
         if not frames:
             _mark(ev, "no_frames")
             continue
@@ -203,6 +205,9 @@ def _with_coverage(out: list[Event]) -> list[Event]:
     cov = coverage(out)
     for e in out:
         e.extra.setdefault("vlm", {"status": "not_checked", "agreement": "not_checked"})["coverage"] = cov
+    from .runtime import record_stage
+
+    record_stage("verify", **cov)
     return out
 
 
@@ -224,10 +229,15 @@ def _apply(ev: Event, res: dict[str, Any], types: dict[str, dict[str, Any]], cfg
     p0 = float(ev.confidence)
     p_new, trace = update_confidence(p0, visible, conf, cand, vlm_type, cfg)
     agreement = trace["agreement"]
+    degraded = "regex_fallback" in (res.get("flags") or [])
+    if degraded:  # поля вытащены регэкспом из невалидного текста — ни подтверждать, ни отклонять по ним нельзя
+        p_new = trace["p_prior"]
+        trace = {**trace, "p_post": trace["p_prior"], "agreement": "uncertain"}
+        agreement = "uncertain"
 
     # переклассификация — только для источников, чей тип слабый (temporal/vlm), и при уверенной VLM
     retyped = False
-    if (agreement == "type_mismatch" and visible and vlm_type in types
+    if (not degraded and agreement == "type_mismatch" and visible and vlm_type in types
             and ev.source in set(vcfg.get("retype_sources") or [])
             and conf >= float(vcfg.get("retype_min_conf", 0.7))):
         ev.extra["vlm_original_type_id"] = cand

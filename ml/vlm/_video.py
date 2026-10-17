@@ -1,6 +1,8 @@
 """Минимальный загрузчик видео для CLI (python -m ml.vlm.try), если ml.ingest (A04) недоступен.
 
-В пайплайне используется ml.ingest.load_video; здесь — только запасной вариант на cv2 (лениво).
+В пайплайне используется ml.ingest.load_video (источник истины по времени/PTS); здесь — только запасной
+вариант на cv2 (лениво). Видео с ПЕРЕМЕННЫМ fps: кадр ищется по времени (CAP_PROP_POS_MSEC — по PTS в
+FFmpeg-бэкенде), а не по номеру кадра * fps; duration — оценка (кадры/fps), для VFR приблизительна.
 """
 from __future__ import annotations
 
@@ -36,24 +38,30 @@ class SimpleClip:
         self._cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, int(idx)))
         return self._cap.read()
 
-    def _get(self, idx: int) -> Any:
-        idx = max(0, min(int(idx), max(0, self.n_frames - 1)))
-        if idx in self._cache:
-            self._cache.move_to_end(idx)
-            return self._cache[idx]
-        ok, f = self._read_index(idx)
-        if not ok:
-            return None
-        self._cache[idx] = f
-        if len(self._cache) > self._cache_n:
-            self._cache.popitem(last=False)
-        return f
+    def _read_msec(self, ms: int) -> tuple[bool, Any]:
+        cv2 = self._cv2
+        self._cap.set(cv2.CAP_PROP_POS_MSEC, max(0, int(ms)))
+        ok, f = self._cap.read()
+        if not ok and ms > 0:  # за концом — последний кадр
+            ok, f = self._read_index(max(0, self.n_frames - 1))
+        return ok, f
 
     def frame(self, i: int) -> Any:
         return self.frame_at(self.times[i])
 
     def frame_at(self, t: float) -> Any:
-        return self._get(int(round(float(t) * self.fps)))
+        ms = int(round(max(0.0, float(t)) * 1000.0))
+        key = ms // 10  # кэш с шагом 10 мс
+        if key in self._cache:
+            self._cache.move_to_end(key)
+            return self._cache[key]
+        ok, f = self._read_msec(ms)
+        if not ok:
+            return None
+        self._cache[key] = f
+        if len(self._cache) > self._cache_n:
+            self._cache.popitem(last=False)
+        return f
 
     def close(self) -> None:
         self._cap.release()

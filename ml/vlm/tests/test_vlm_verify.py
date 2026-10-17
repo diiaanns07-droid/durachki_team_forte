@@ -179,16 +179,43 @@ def test_emit_rejected_flag(clip, cfg, clock):
     assert rej.extra["vlm_verdict"] == "rejected"
 
 
-def test_truncated_answer_marked_incomplete(clip, cfg, clock):
+def test_truncated_answer_is_never_a_confirmation(clip, cfg, clock):
+    """Обрезанный по max_new_tokens ответ (finish=length) — не подтверждение, даже если JSON «чинится»."""
     from ml.vlm.backends.base import GenResult
 
     class Trunc(MockBackend):
         def generate(self, images, system, prompt, **kw):
             self.calls.append({"prompt": prompt})
-            return GenResult(text='{"visible": true, "type_id": "V05", "confidence": 0.8, "observed_facts": ["Кас',
+            return GenResult(text='{"visible": true, "type_id": "V05", "confidence": 0.9, "observed_facts": ["Кас',
                              latency_s=1.0, completion_tokens=180, finish_reason="length")
 
-    out = verify_events(clip, [_ev(conf=0.5)], 30.0, cfg=cfg, backend=Trunc(clock=clock), clock=clock)[0]
+    be = Trunc(clock=clock)
+    out = verify_events(clip, [_ev(conf=0.5)], 30.0, cfg=cfg, backend=be, clock=clock)[0]
     v = out.extra["vlm"]
-    assert v["status"] == "ok" and v["finish_reason"] == "length" and v["complete"] is False
-    assert v["repaired_json"] is True
+    assert v["status"] == "truncated" and v["verdict"] == "unsure" and v["score"] == 0.0
+    assert v["agreement"] == "uncertain" and out.confidence == 0.5 and out.facts == []
+    assert len(be.calls) == 2 and be.calls[1]["prompt"] != be.calls[0]["prompt"]  # 1 ретрай со строгим суффиксом
+    assert v["coverage"]["complete"] is False
+
+
+def test_truncated_then_complete_answer_is_used(clip, cfg, clock):
+    from ml.vlm.backends.base import GenResult
+    answers = [GenResult(text='{"visible": true, "type_id": "V05", "confid', latency_s=1.0, finish_reason="length"),
+               GenResult(text=_ans(True, "V05", 0.9, []), latency_s=1.0, finish_reason="eos")]
+
+    class Seq(MockBackend):
+        def generate(self, images, system, prompt, **kw):
+            self.calls.append({"prompt": prompt})
+            return answers.pop(0)
+
+    out = verify_events(clip, [_ev(conf=0.5)], 30.0, cfg=cfg, backend=Seq(clock=clock), clock=clock)[0]
+    assert out.extra["vlm"]["status"] == "ok" and out.extra["vlm"]["verdict"] == "confirm"
+
+
+def test_regex_fallback_never_confirms_or_rejects(clip, cfg, clock):
+    be = MockBackend(responses=["visible: yes, type_id: V05, confidence: 0.95 (сломанный ответ",
+                                "visible: yes, confidence 0.95 и снова не JSON"], clock=clock)
+    out = verify_events(clip, [_ev(conf=0.5)], 30.0, cfg=cfg, backend=be, clock=clock)[0]
+    v = out.extra["vlm"]
+    assert "regex_fallback" in v["flags"] and v["agreement"] == "uncertain" and v["verdict"] == "unsure"
+    assert out.confidence == 0.5 and out.facts == []

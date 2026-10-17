@@ -84,3 +84,41 @@ def test_verify_accepts_zones_kwarg(clip):
     out = vlm.verify(clip, [Event("V05", 1, 2, 1.5, 0.5, "rules")], 30.0,
                      zones=[Zone("desk", [(0.1, 0.3), (0.9, 0.3), (0.9, 0.6)])])
     assert out[0].extra["vlm"]["status"] == "ok"
+
+
+def test_stale_registry_entry_is_replaced_and_released(monkeypatch):
+    """После unload/смены конфига реестр A03 не должен держать старый экземпляр, а новый — жить вне учёта VRAM."""
+    reg, calls = _install_registry(monkeypatch)
+    be1 = _Fake()
+    assert runtime.ensure_loaded(be1)[0]
+    be1.unload()  # выгрузили напрямую (vlm.unload / смена конфига)
+    be2 = _Fake()
+    assert runtime.ensure_loaded(be2)[0]
+    assert reg.models["ml.vlm:qwen"][0] is be2 and be2.loaded and not be1.loaded
+    monkeypatch.setattr(runtime, "_backend", be2)
+    runtime.unload_backend()
+    assert "ml.vlm:qwen" not in reg.models and not be2.loaded  # запись снята, VRAM освобождена
+
+
+def test_gpu_locks_released_after_backend_exception(clip):
+    import threading
+    from ml.vlm import gpu
+    from ml.vlm._contract import Event
+
+    class Boom(_Fake):
+        def generate(self, *a, **k):
+            raise RuntimeError("CUDA error")
+
+    ext = threading.Lock()
+    vlm.set_gpu_lock(ext)
+    try:
+        be = Boom()
+        be._loaded = True  # «тёплая» модель: падение — внутри generate под GPU-lock
+        runtime.set_backend(be)
+        out = vlm.verify(clip, [Event("V05", 1, 2, 1.5, 0.6, "rules")], 30.0)
+        assert out[0].extra["vlm"]["status"] == "error" and out[0].confidence == 0.6
+        assert ext.acquire(timeout=0.1)  # внешний lock A03 отпущен
+        ext.release()
+        assert gpu.priority_lock().stats()["held"] is False  # и приоритетный lock процесса
+    finally:
+        vlm.set_gpu_lock(None)

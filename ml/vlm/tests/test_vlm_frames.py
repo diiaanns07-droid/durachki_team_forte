@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 
 from ml.vlm.frames import (annotate, get_frame, make_grid, motion_energy, prepare_images, resize_max_side,
                            to_pil_rgb, verify_times)

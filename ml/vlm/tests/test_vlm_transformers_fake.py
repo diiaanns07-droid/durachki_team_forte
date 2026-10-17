@@ -158,7 +158,7 @@ def test_option_probs_letters_when_first_tokens_collide(be):
     be._model = Model([], logits=logits)
     sc = be.option_probs([], "s", "Вопрос?", {"yes": ["Не знаю"], "no": ["Нет"], "unknown": ["Не видно"]})
     assert sc.mode == "letters" and max(sc.probs, key=sc.probs.get) == "no"
-    assert "Ответь одной буквой" in be._processor.seen[-1][-1]["content"][-1]["text"]
+    assert "Вместо слова ответь одной буквой" in be._processor.seen[-1][-1]["content"][-1]["text"]
 
 
 def test_chat_converts_openai_messages(be):
@@ -182,3 +182,72 @@ def test_oom_returns_error_not_raise(be):
     be._model = OOMModel([])
     r = be.generate([], "s", "p", max_new_tokens=4)
     assert r.error == "cuda_oom" and r.text == ""
+
+
+# ---------------------------------------------------------------- verify на поддельном transformers-адаптере
+# Полный путь: verify_events -> call_json -> TransformersBackend._run (поддельные torch/модель/процессор).
+
+class TextProc(Proc):
+    """decode возвращает заданный текст ответа (как настоящий процессор декодирует токены)."""
+
+    def __init__(self, text):
+        super().__init__()
+        self.text = text
+
+    def decode(self, ids, skip_special_tokens=True):
+        return self.text
+
+
+def _verify_with_fake(be, clip, cfg, conf=0.5):
+    from ml.vlm._contract import Event
+    from ml.vlm.verifier import verify_events
+    ev = Event("V05", 4.0, 6.0, 5.0, conf, "rules", [], {})
+    return verify_events(clip, [ev], 60.0, cfg=cfg, backend=be)[0]
+
+
+def test_fake_tf_truncated_json_gives_unsure(be, clip, cfg):
+    be._processor = TextProc('{"visible": true, "type_id": "V05", "confidence": 0.9, "observed_facts": ["Кассир')
+    be._model = Model(list(range(10, 10 + 180)))  # 180 токенов без EOS = max_new_tokens_verify -> length
+    out = _verify_with_fake(be, clip, cfg)
+    v = out.extra["vlm"]
+    assert v["status"] == "truncated" and v["verdict"] == "unsure" and out.confidence == 0.5
+
+
+def test_fake_tf_deadline_gives_unsure_without_retry(be, clip, cfg, monkeypatch):
+    import time as _time
+
+    class Slow(Model):
+        def generate(self, **kw):
+            _time.sleep(kw["max_time"] + 0.05)  # упёрлись в max_time
+            return super().generate(**kw)
+
+    be._processor = TextProc('{"visible": true, "type_id": "V05", "confidence": 0.9}')
+    be._model = Slow([11, 12, 13])  # без EOS, меньше max_new_tokens -> finish=time
+    cfg["generation"]["call_timeout_s"] = 0.5
+    out = _verify_with_fake(be, clip, cfg)
+    v = out.extra["vlm"]
+    assert v["status"] == "timeout" and v["verdict"] == "unsure"
+    assert v["attempts"] == 1 and out.confidence == 0.5  # время не ретраим
+
+
+def test_fake_tf_oom_gives_error_unsure(be, clip, cfg):
+    class OOMModel(Model):
+        def generate(self, **kw):
+            raise sys.modules["torch"].cuda.OutOfMemoryError("oom")
+
+    be._model = OOMModel([])
+    out = _verify_with_fake(be, clip, cfg, conf=0.7)
+    v = out.extra["vlm"]
+    assert v["status"] == "error" and v["error"] == "cuda_oom" and v["verdict"] == "unsure"
+    assert out.confidence == 0.7  # ни подтверждения, ни отказа
+
+
+def test_fake_tf_complete_json_confirms(be, clip, cfg):
+    import json as _json
+    be._processor = TextProc(_json.dumps({"visible": True, "type_id": "V05", "observed_facts": [],
+                                          "confidence": 0.9, "best_frame": 2, "visible_frames": [2],
+                                          "uncertain_because": ""}))
+    be._model = Model([11, 12, 2])  # EOS -> complete
+    out = _verify_with_fake(be, clip, cfg)
+    v = out.extra["vlm"]
+    assert v["status"] == "ok" and v["finish_reason"] == "eos" and v["complete"] is True and v["verdict"] == "confirm"

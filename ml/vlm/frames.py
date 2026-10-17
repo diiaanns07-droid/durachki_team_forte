@@ -51,21 +51,55 @@ def verify_times(t_start: float, t_end: float, t_peak: float, duration: float, n
 
 def get_frame(clip: Any, t: float) -> Any:
     """Точный кадр через clip.frame_at(t); иначе ближайший сэмплированный clip.frame(i)."""
+    return get_frame_ts(clip, t)[0]
+
+
+def get_frame_ts(clip: Any, t: float) -> tuple[Any, Optional[float]]:
+    """(кадр, ФАКТИЧЕСКОЕ время кадра, с). Время в отчётах VLM (frame_times, t_best, t_transition) — это время
+    реально показанного модели кадра, а не запрошенное.
+
+    1) clip.frame_at_ts(t) (A04: точный кадр + его PTS; VFR, пропуски и края ролика учтены);
+    2) clip.frame_at(t) — PTS неизвестен, берём запрошенное t;
+    3) ближайший сэмплированный clip.frame(i) — его время clip.times[i].
+    """
+    fn = getattr(clip, "frame_at_ts", None)
+    if callable(fn):
+        try:
+            f, ts = fn(float(t))
+            if f is not None:
+                return f, (float(ts) if ts is not None else float(t))
+        except Exception as e:  # noqa: BLE001
+            log.debug("frame_at_ts(%.2f) failed: %s", t, e)
     try:
         f = clip.frame_at(float(t))
         if f is not None:
-            return f
+            return f, float(t)
     except Exception as e:  # noqa: BLE001
         log.debug("frame_at(%.2f) failed: %s", t, e)
     times = list(getattr(clip, "times", []) or [])
     if not times:
-        return None
+        return None, None
     i = min(range(len(times)), key=lambda k: abs(times[k] - t))
     try:
-        return clip.frame(i)
+        return clip.frame(i), float(times[i])
     except Exception as e:  # noqa: BLE001
         log.debug("frame(%d) failed: %s", i, e)
-        return None
+        return None, None
+
+
+def frames_at(clip: Any, times: Iterable[float]) -> tuple[list[Any], list[float]]:
+    """Кадры для моментов times с фактическим временем; один и тот же кадр (VFR, пропуск, край) — один раз."""
+    frames: list[Any] = []
+    ftimes: list[float] = []
+    for t in times:
+        f, ts = get_frame_ts(clip, t)
+        if f is None or ts is None:
+            continue
+        if any(abs(ts - x) < 1e-4 for x in ftimes):
+            continue
+        frames.append(f)
+        ftimes.append(round(ts, 4))
+    return frames, ftimes
 
 
 def to_pil_rgb(frame: Any) -> Any:
@@ -166,9 +200,11 @@ def prepare_images(frames: list[Any], times: list[float], boxes: Optional[dict[s
     cfg = cfg or {}
     max_side = int(cfg.get("max_side", 448))
     out = []
+    # кадр-«пик» — ближайший по фактическому времени (PTS может не совпасть с запрошенным t_peak)
+    k_peak = min(range(len(times)), key=lambda j: abs(times[j] - peak_t)) if peak_t is not None and times else None
     for k, (f, t) in enumerate(zip(frames, times)):
         img = resize_max_side(to_pil_rgb(f), max_side)
-        is_peak = peak_t is not None and abs(t - peak_t) < 1e-3
+        is_peak = k_peak is not None and k == k_peak
         img = annotate(
             img,
             boxes if cfg.get("draw_boxes", True) else None,
