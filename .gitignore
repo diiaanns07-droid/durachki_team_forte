@@ -1,0 +1,103 @@
+# ============================================================
+# Kassa Sentinel — .gitignore (владелец A01)
+# ПРАВИЛО 6: в git НЕ коммитим видео, кадры из датасета и веса.
+# ============================================================
+
+# --- Данные, веса, кэши (любой уровень вложенности) ---
+data/
+weights/
+cache/
+.cache/
+hf_cache/
+.hf_cache/
+models_cache/
+outputs/
+runs/
+artifacts/
+
+# --- Видео (оба регистра: Linux/CI чувствителен к регистру) ---
+*.mov
+*.MOV
+*.mp4
+*.MP4
+*.avi
+*.AVI
+*.mkv
+*.m4v
+*.webm
+
+# --- Кадры (доказательства/кадры датасета — JPEG). Исключения ниже. ---
+*.jpg
+*.JPG
+*.jpeg
+*.JPEG
+!docs/assets/**/*.jpg
+!pitch/assets/**/*.jpg
+!frontend/public/**/*.jpg
+
+# --- Веса моделей и бинарные артефакты ---
+*.onnx
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.gguf
+*.ggml
+*.engine
+*.trt
+*.plan
+*.tflite
+*.task
+*.bin
+*.h5
+*.pb
+*.pkl
+*.joblib
+*.npy
+*.npz
+*.lmdb
+*.faiss
+
+# --- Frontend ---
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# --- Секреты / окружение ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+cloudflared*.json
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+.ipynb_checkpoints/
+
+# --- IDE / ОС ---
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Логи / временные ---
+*.log
+tmp/
+*.tmp
