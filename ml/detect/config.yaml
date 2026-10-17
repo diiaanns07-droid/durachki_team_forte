@@ -20,7 +20,10 @@ closed_set:
   # порядок попыток: первый доступный бэкенд выигрывает
   backends: [hf]            # baseline. Дообученный ONNX — опционально: [onnx_finetuned, hf] (или SENTINEL_DETECT_EXTRAS=finetuned)
   hf_model_id: PekingU/rtdetr_v2_r18vd          # Apache-2.0 (заявлено); скачан у L1 в weights/hf/hub
-  hf_fallback_ids: [ustc-community/dfine-medium-obj2coco]   # скачан у L1; грузится, только если baseline не загрузился
+  # Резервный детектор НЕ подставляется молча: список пуст. Явный выбор (после замера L2), напр.:
+  #   hf_model_id: ustc-community/dfine-medium-obj2coco   (скачан у L1)  — замена основного
+  #   hf_fallback_ids: [ustc-community/dfine-medium-obj2coco]            — резерв (status=degraded + warning)
+  hf_fallback_ids: []
   proxy_labels: true        # COCO-классы-заместители (book→document, handbag→bag, bowl→cup...) — с исходным именем в source
   onnx_path: detect/finetuned/model.onnx       # относительно SENTINEL_WEIGHTS
   onnx_labels: detect/finetuned/labels.json    # список имён классов (из LABELS)

@@ -1,8 +1,23 @@
 from __future__ import annotations
 
+import importlib
 import socket
+import sys
+import types
 
 import pytest
+
+# Тесты импортируют канонический контракт (contracts.sentinel_contracts). В интеграции он есть и
+# fallback-копия удалена. Только в отдельной ветке A05 (без contracts/) подставляем побайтно идентичную
+# копию ml/detect/_contract_fallback.py под каноническим именем — тестовая прокладка, не прод-код.
+try:
+    importlib.import_module("contracts.sentinel_contracts")
+except ModuleNotFoundError:  # pragma: no cover — ветка без A01
+    from ml.detect import _contract_fallback as _fb
+
+    _pkg = sys.modules.setdefault("contracts", types.ModuleType("contracts"))
+    _pkg.sentinel_contracts = _fb  # type: ignore[attr-defined]
+    sys.modules["contracts.sentinel_contracts"] = _fb
 
 
 @pytest.fixture(autouse=True)

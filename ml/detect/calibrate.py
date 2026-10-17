@@ -24,11 +24,10 @@ from typing import Any, Callable, Optional, Sequence
 
 import numpy as np
 
-from .autolabel import DEFAULT_DATASET, default_images_root, video_key
+from .autolabel import DEFAULT_DATASET, category_label, default_images_root, group_key
 from .boxes import RawDets, classwise_nms, iou_matrix
 from .config import label_threshold, load_config
 from .finetune import load_verified, split_by_video
-from .labels import map_label
 
 # группы запросов inventory (OWLv2) → метка GT
 GROUP_TO_LABEL = {"cash": "cash", "cash_bag": "cash_bag", "generic_bag": "bag", "phone": "cell_phone",
@@ -36,11 +35,11 @@ GROUP_TO_LABEL = {"cash": "cash", "cash_bag": "cash_bag", "generic_bag": "bag", 
 
 
 def gt_boxes(coco: dict[str, Any]) -> tuple[dict[int, dict[str, np.ndarray]], dict[str, str]]:
-    """{image_id: {label: (N,4) норм. xyxy}}; категории сопоставляются с LABELS (map_label)."""
+    """{image_id: {label: (N,4) норм. xyxy}}; категории → LABELS через contract_label (det-labels) или имя."""
     cat = {}
     unmapped: dict[str, str] = {}
     for c in coco.get("categories", []):
-        lab = map_label(c["name"])
+        lab = category_label(c)
         if lab is None:
             unmapped[str(c["id"])] = c["name"]
         else:
@@ -152,7 +151,7 @@ def calibrate(coco: dict[str, Any], root: Path, producer: Callable[[np.ndarray],
         classes[lab] = row
     return {"classes": classes, "thresholds": chosen, "unmapped_categories": unmapped,
             "split": {"calib_images": len(cal_ids), "holdout_images": len(hold_ids),
-                      "holdout_videos": sorted({by_id[i].get("video") or video_key(by_id[i]["file_name"]) for i in hold_ids})}}
+                      "holdout_videos": sorted({group_key(by_id[i]) for i in hold_ids})}}
 
 
 def _r4(x: float) -> Optional[float]:
@@ -183,7 +182,7 @@ def owl_producer(cfg: dict[str, Any], min_score: float = 0.05) -> Callable[[np.n
         boxes, probs = sc.score([img])[0]
         G = _group_scores(probs, sc.texts, queries)
         parts = []
-        for g, lab in GROUP_TO_LABEL.items():
+        for g in GROUP_TO_LABEL:
             m = G[g] >= min_score
             if m.any():
                 parts.append(RawDets(boxes[m], G[g][m].astype(np.float32), [g] * int(m.sum()), ["owl"] * int(m.sum())))
@@ -208,7 +207,7 @@ def to_yaml_override(closed_thr: dict[str, float], owl_thr: dict[str, float], me
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m ml.detect.calibrate")
     ap.add_argument("--gt", default=str(DEFAULT_DATASET))
-    ap.add_argument("--images", default="", help="корень изображений (по умолчанию <dir>/images)")
+    ap.add_argument("--images", default="", help="корень изображений (по умолчанию info.images_root или <dir>/images)")
     ap.add_argument("--annotator", default=None)
     ap.add_argument("--target-precision", type=float, default=0.9)
     ap.add_argument("--min-support", type=int, default=10)
@@ -219,7 +218,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--report", default="calib/detect_calibration.json")
     a = ap.parse_args(argv)
     coco = load_verified(a.gt, a.annotator)   # псевдоразметка / неизвестное происхождение → отказ
-    root = Path(a.images) if a.images else default_images_root(a.gt)
+    root = Path(a.images) if a.images else default_images_root(a.gt, coco)
     cfg = load_config()
     kw = dict(target_precision=a.target_precision, min_support=a.min_support, holdout_frac=a.holdout_frac, iou_thr=a.iou)
     rep: dict[str, Any] = {"gt": a.gt, "label_status": coco["info"].get("label_status"),

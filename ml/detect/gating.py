@@ -20,7 +20,7 @@ def motion_from_quality(clip: Any, n: int) -> Optional[list[float]]:
         if isinstance(q, dict):
             seq = q.get("motion_energy") or q.get("motion")
         elif hasattr(q, "motion_energy"):
-            seq = getattr(q, "motion_energy")
+            seq = q.motion_energy
         elif isinstance(q, (list, tuple)) and q and isinstance(q[0], dict):
             seq = [float(x.get("motion_energy", 0.0)) for x in q]
         if seq is None:

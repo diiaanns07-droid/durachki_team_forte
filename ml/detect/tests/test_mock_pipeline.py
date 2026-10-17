@@ -180,3 +180,42 @@ def test_landscape_video_other_angle(mock_mode):
     dets = detect(clip)
     _check_format(dets)
     assert {lab for lab, _ in gts[0]} <= {d.label for d in dets if d.t == 0.0}
+
+
+def test_bbox_normalized_to_actual_frame_not_clip_metadata(mock_mode):
+    """Если A04 отдаёт кадры другого размера, чем clip.width/height (например, уменьшенные), bbox нормируется
+    к фактическому кадру — координаты не «съезжают»."""
+    import cv2
+
+    clip, gts = synth_clip(duration_s=0.4)
+    small = [cv2.resize(f, (f.shape[1] // 2, f.shape[0] // 2), interpolation=cv2.INTER_NEAREST) for f in clip.frames]
+    clip2 = ArrayClip(frames=small, times=clip.times, width=464, height=848, fps=clip.fps, duration=clip.duration)
+    dets = detect(clip2)
+    for label, box in gts[0]:
+        cand = [d for d in dets if d.t == 0.0 and d.label == label]
+        assert cand and max(iou_matrix(np.array([box]), np.array([d.bbox for d in cand]))[0]) > 0.8, label
+
+
+def test_missing_detection_under_poor_visibility_is_not_absence(mock_mode):
+    """Тёмные кадры (свет выключили): детекций нет, но это НЕ «объектов нет». detect() ничего не утверждает об
+    отсутствии; inventory/safe_door_state отвечают unknown; coverage считает кадры обработанными, а не «чистыми»."""
+    from ml.detect import desk_inventory, safe_door_state
+    from ml.detect.synth import SynthObject
+
+    clip, _ = synth_clip(duration_s=3.0, objects=[SynthObject("cash", "rect", (0.25, 0.35, 0.33, 0.40)),
+                                                  SynthObject("safe_open", "rect", (0.70, 0.65, 0.95, 0.85))])
+    for k, t in enumerate(clip.times):
+        if t >= 1.0:
+            clip.frames[k] = np.zeros_like(clip.frames[k])
+    dets = detect(clip)
+    assert {d.label for d in dets if d.t < 1.0} >= {"cash", "safe_open"}
+    assert not [d for d in dets if d.t >= 1.0]
+    st = last_stats()
+    assert st["coverage"]["fraction"] == 1.0                      # кадры проанализированы ...
+    assert not any(k in st for k in ("absent", "absence", "objects_absent"))   # ... но отсутствие не заявлено
+    zones = [{"name": "desk", "polygon": [(0.1, 0.3), (0.9, 0.3), (0.9, 0.6), (0.1, 0.6)]},
+             {"name": "safe", "polygon": [(0.65, 0.62), (0.98, 0.62), (0.98, 0.88), (0.65, 0.88)]}]
+    inv = desk_inventory(clip, 2.0, zones, config={"inventory": {"mode": "rare_open_vocab"}})
+    assert all(it.state == "unknown" for it in inv.items.values())
+    assert safe_door_state(clip, 2.0, zones, config={"inventory": {"mode": "rare_open_vocab"}}).state == "unknown"
+    assert desk_inventory(clip, 0.4, zones, config={"inventory": {"mode": "rare_open_vocab"}}).present("cash")

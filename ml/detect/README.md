@@ -10,7 +10,7 @@
 | Часть | Состояние | По умолчанию |
 |---|---|---|
 | **Baseline**: RT-DETRv2-S (`PekingU/rtdetr_v2_r18vd`) из `weights/hf/hub`, офлайн, transformers 5.x, каждый сэмпл, fp16 на CUDA (откат на fp32) | готово | **вкл.** |
-| Резерв: D-FINE-M (`ustc-community/dfine-medium-obj2coco`) — грузится, только если baseline не загрузился | готово | вкл. как резерв |
+| D-FINE-M (`ustc-community/dfine-medium-obj2coco`, скачан у L1) — только **явный** выбор в конфиге; молча не подставляется | готово | выкл. |
 | `desk_inventory` / `safe_door_state`, режим `baseline` | готово (фаза 2) | **вкл.** |
 | **Абляция:** `inventory.mode=rare_open_vocab` — редкий проход OWLv2 с контрастными запросами | готово, **ждёт замера L2** | выкл. |
 | `coverage` и `status=partial` в `last_stats()` | готово (фаза 2) | вкл. |
@@ -20,8 +20,25 @@
 | Mock (`SENTINEL_MOCK=1`) — только тесты и демо | готово | выкл. |
 
 ### Что реально проверено (CPU, без GPU, без реальных данных и весов)
-`python -m pytest ml/detect/tests`: **67 passed** (torch 2.14.1 CPU, transformers 5.20.1, Python 3.13), `pyflakes` чисто.
+`python -m pytest ml/detect/tests`: **91 passed** (torch 2.14.1 CPU, transformers 5.20.1, Python 3.13); ruff по конфигу
+интеграции и `pyflakes` чисты. Как в CI (Python 3.11, opencv 4.14 по lock L1, без torch, `-m "not gpu and not slow"`):
+**76 passed, 3 skipped** (пропущены три файла, которым нужен torch). Тесты импортируют канонический
+`contracts.sentinel_contracts` и не требуют удалённой в интеграции fallback-копии.
 - Загрузка крошечной RT-DETRv2 из раскладки `weights/hf/hub` (как у L1) и из `save_pretrained`-папки. Сеть в тесте запрещена.
+- Офлайн-кэш: поиск в `HF_HUB_CACHE` → `HF_HOME/hub` → `weights/hf/hub` → `weights/hf`; пустой снапшот (прерванная
+  загрузка) не считается весами; `local_files_only=True` при любом `HF_HUB_OFFLINE`.
+- Нет весов → `DetectorUnavailable` с id модели и списком проверенных путей; снапшот есть, но не грузится → тоже явная
+  ошибка. Ни mock, ни другой детектор не подставляются: скачанный D-FINE без явного выбора не используется, явный
+  резерв даёт `status=degraded` и предупреждение.
+- Таблица классов: все 80 классов COCO → 21 сопоставлен с метками контракта, 59 игнорируются; общий детектор не выдаёт
+  нестандартные метки (cash, safe, door, keys…), даже если в его `id2label` есть похожие имена.
+- Синтетические выходы моделей: нормированный бокс одинаков для портретного, горизонтального и квадратного кадра;
+  пиксели = норм. × (W, H); кадры разных размеров в одном вызове; OWLv2 на горизонтальном кадре (паддинг снизу);
+  bbox нормируется к фактическому кадру, даже если `clip.width/height` от него отличаются.
+- Отсутствие детекции: на тёмных кадрах боксов нет, `coverage` считает кадры обработанными, но об отсутствии ничего не
+  утверждается; `desk_inventory`/`safe_door_state` отвечают `unknown`.
+- Совместимость с выгрузкой `det-labels` (`datasets/det/export_coco.py`): `info.images_root`, `contract_label`
+  (`safe_closed` → `safe`), группы дубликатов и зафиксированный split.
 - `desk_inventory`/`safe_door_state` на синтетике:
   - бывает только present или unknown, «нет» не выдаётся;
   - фильтр по зонам;
@@ -123,23 +140,46 @@ SENTINEL_DETECT_CONFIG=calib/detect_thresholds.yaml python -m ml.detect.probe ..
 - Если класс недостижим или поддержки мало, остаётся приор из `config.yaml`.
 - Пороги в `config.yaml` — **приоры, а не калибровка**. mAP — только через `eval_det.py` на человеческой разметке.
 
-### Разметка Дамира (`datasets/det/annotations.json`, COCO)
+### Разметка Дамира (`datasets/det/annotations.json`, COCO из ветки `det-labels`)
 - **Принимается:** ручная разметка с `--annotator <имя>`, либо проверенные предложения после `autolabel mark-verified`.
 - **Отклоняется:** псевдоразметка (`info.kind=proposals`, `verified=false`, `score` без `verified`) и файл неизвестного происхождения без `--annotator`. Затрагивает `finetune`, `calibrate` и `quality_claim` в `eval_det`.
-- **Изображения:** `datasets/det/images/<видео>/<кадр>.jpg` (по умолчанию `<dir>/images`). Имена категорий сопоставляются с `LABELS`.
-- **Предложения для разметки:** `python -m ml.detect.autolabel propose --frames <кадры> --out datasets/det/proposals.json` (`verified=false`) → импорт в CVAT → правка человеком → экспорт в `annotations.json`.
+- **Формат `det-labels/export_coco.py` поддержан:**
+  - кадры ищутся в `info.images_root` (`data/frames`, от корня репо), иначе в `<dir>/images`;
+  - категория → метка контракта через `contract_label` (`safe_closed` → `safe`), иначе по имени;
+  - train/val берётся из поля `split` каждого кадра (зафиксирован в `split.json`); без него деление идёт по `group`, поэтому дубликаты по md5 не разъезжаются.
+- **Классы дообучения по умолчанию** — нестандартные метки разметки: `cash, cash_bag, safe, safe_open, money_counter, cell_phone, door_open`. person, cup и food покрывает COCO; их можно добавить через `--classes`.
+- **Предложения для разметки:** `python -m ml.detect.autolabel propose --frames <кадры> --out datasets/det/proposals.json` (`verified=false`) → правка человеком → экспорт в `annotations.json`. У `det-labels` есть свой поток через Label Studio.
 
-## Семантика меток (без домыслов)
+## Таблица классов: какой бэкенд реально даёт метку
 
-| Метка | Источник | Что означает, а что НЕ означает |
-|---|---|---|
-| person | COCO person | человек; **роль детектор не определяет** |
-| cell_phone | COCO «cell phone» | может сработать на стационарный телефон (контраст — только в inventory rare_open_vocab) |
-| cup, bottle, laptop | одноимённые классы COCO | — |
-| food | COCO-еда (banana … cake) | общее понятие «еда» |
-| cup ← bowl, document ← book | класс-заместитель | сходство, а не тождество: `source` = `...:book~proxy` |
-| bag ← handbag/backpack/suitcase | COCO | любая сумка; **не инкассаторская** |
-| cash, cash_bag, safe, safe_open, door, door_open, money_counter, keys | только опциональный OWLv2 или дообученная модель | визуальное сходство с запросом, а не назначение предмета |
+Конфиг по умолчанию: `closed_set.hf_model_id = PekingU/rtdetr_v2_r18vd`, `backends: [hf]`,
+`hf_fallback_ids: []`, open-vocab, TTA, тайлы и finetuned выключены, `inventory.mode = baseline`.
+
+| Метка | По умолчанию (RT-DETRv2, COCO) | Опционально | Что проверить локально (L2) |
+|---|---|---|---|
+| person | COCO `person` | — | полнота на виде сверху, порог 0.25 — приор |
+| cell_phone | COCO `cell phone` | OWLv2 (`mobile phone in hand`), finetuned | ложные срабатывания на стационарном телефоне |
+| cup | COCO `cup`, `wine glass`, `bowl~proxy` | OWLv2 (`drink cup`) | — |
+| bottle, laptop | одноимённые COCO | — | — |
+| food | COCO-еда (banana … cake) | OWLv2 (`food`) | — |
+| bag | COCO handbag/backpack/suitcase | — | любая сумка, **не инкассаторская** |
+| document | COCO `book~proxy` | — | сходство, не «банковский документ» |
+| **cash** | **нет** | OWLv2 (`stack of banknotes`, `cash money`), finetuned | нет ни одного проверенного бэкенда до замера/разметки |
+| **cash_bag** | **нет** | OWLv2 (`green canvas bag`), finetuned | сходство с запросом ≠ инкассаторская сумка |
+| **safe** | **нет** | OWLv2 (`metal safe`), finetuned (`safe_closed` → `safe`) | вид сверху не проверен |
+| **safe_open** | **нет** | OWLv2 (`open safe door`), finetuned | открыт/закрыт на виде сверху не проверен |
+| **door / door_open** | **нет** | OWLv2 (`glass door`, `open door`), finetuned (door_open) | — |
+| **money_counter** | **нет** | OWLv2, finetuned | — |
+| **keys** | **нет** | OWLv2 (`keys`) | — |
+
+- Общий COCO-детектор (RT-DETRv2 или явно выбранный D-FINE) **никогда** не выдаёт нестандартные метки, даже если в `id2label` модели есть похожие имена (`STANDARD_LABELS` в `labels.py`). Поддержка наличных и сейфа появляется только с OWLv2 (`SENTINEL_DETECT_EXTRAS=open_vocab` или `inventory.mode=rare_open_vocab`) или с моделью, дообученной на проверенной разметке (`SENTINEL_DETECT_EXTRAS=finetuned`). Ни один из этих путей не измерен на реальных роликах.
+- В `Detection.source` всегда записан исходный класс или запрос: `rtdetr_v2_r18vd:book~proxy`, `owlv2:green canvas bag`.
+- Роли людей детектор не определяет.
+
+### Отсутствие детекции ≠ отсутствие объекта
+- `detect()` возвращает только найденное. Пустой результат на кадре **не** доказывает, что объекта нет: темнота (свет выключили), перекрытие, ракурс или слабый для вида сверху класс тоже дают пустой ответ.
+- `last_stats()["coverage"]` говорит лишь, какие кадры были обработаны, а не что на них было видно.
+- `desk_inventory` / `safe_door_state` никогда не отвечают «нет»: только `present`/`unknown`. Для сейфа `closed` — лишь при положительном свидетельстве.
 
 ## Запуск и окружение
 ```bash
@@ -150,6 +190,13 @@ python -m ml.detect.licenses --check                 # сверка заявле
 HF_HUB_OFFLINE=1 python -m ml.detect video.mov --out dets.json
 python -m pytest ml/detect/tests
 ```
+
+### Офлайн-загрузка весов
+- Порядок поиска снапшота: `HF_HUB_CACHE` → `HF_HOME/hub` → `<SENTINEL_WEIGHTS>/hf/hub` (раскладка L1) → `<SENTINEL_WEIGHTS>/hf` → папка `save_pretrained` в `<SENTINEL_WEIGHTS>/detect/<имя>`.
+- Загрузка — `from_pretrained(..., cache_dir=<найденный кэш>, local_files_only=True)`: в сеть не ходит даже без `HF_HUB_OFFLINE`.
+- Нет весов → `DetectorUnavailable` с id модели и списком проверенных путей (`on_unavailable: raise`).
+- Резервный детектор подставляется только если явно задан в `closed_set.hf_fallback_ids`; тогда `status=degraded` и предупреждение.
+- Mock включается только `SENTINEL_MOCK=1`.
 
 | env | смысл |
 |---|---|
@@ -164,7 +211,7 @@ python -m pytest ml/detect/tests
 | Модель | Заявленная лицензия | Статус | Роль |
 |---|---|---|---|
 | `PekingU/rtdetr_v2_r18vd` | apache-2.0 | `declared_unverified` | baseline |
-| `ustc-community/dfine-medium-obj2coco` | apache-2.0 | `declared_unverified` | резерв |
+| `ustc-community/dfine-medium-obj2coco` | apache-2.0 | `declared_unverified` | явная альтернатива (не резерв по умолчанию) |
 | `google/owlv2-base-patch16-ensemble` | apache-2.0 | `declared_unverified` | абляция / опции |
 | дообученная ONNX | наследуется | `derived` | опционально |
 
@@ -205,3 +252,8 @@ Permissive-модели упрощают соблюдение условий. AG
   - `present` требует минимум 2 кадра окна: против единичных ложных срабатываний и дребезга.
   - Яркость не используется даже как «наблюдаемость». Риск утечки признака «свет выключили при уходе» хуже, чем лишний unknown.
   - Ручная разметка без `mark-verified` принимается только с `--annotator`. Ответственность фиксируется в `train_meta`/отчёте калибровки.
+- **После аудита:**
+  - Тихий переход на D-FINE убран: непроверенный детектор не должен подменять основной. D-FINE — только явный выбор.
+  - Общий детектор ограничен стандартными метками (`STANDARD_LABELS`).
+  - Импорты тестов совпадают с интеграцией (`contracts.sentinel_contracts`), поэтому слияние идёт без конфликтов. Отдельная ветка A05 без `contracts/` получает тестовую прокладку в `tests/conftest.py`.
+  - Загрузчики разметки следуют формату `det-labels`: `images_root`, `contract_label`, `group` и `split`.

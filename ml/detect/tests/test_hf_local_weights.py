@@ -73,3 +73,22 @@ def test_detect_with_local_tiny_rtdetr(tmp_path, monkeypatch, no_network, layout
     detect(clip, config={**cfg, "tta": {"hflip": True, "hflip_on": "all"}, "tiling": {"enabled": True, "on": "all"}})
     st = last_stats()
     assert st["n_flip"] == len(clip.times) and st["n_tiles"] == 2 * len(clip.times)
+
+
+def test_explicit_fallback_detector_is_flagged_degraded(tmp_path, monkeypatch, no_network):
+    """Резервный детектор работает только если задан явно; тогда статус degraded и предупреждение, не «ok»."""
+    from ml.detect import DetectorUnavailable, detect, last_stats
+    from ml.detect.synth import synth_clip
+
+    dfine = "ustc-community/dfine-medium-obj2coco"
+    wdir = tmp_path / "w"
+    _tiny_rtdetr(_hub_snapshot(wdir / "hf" / "hub", dfine))
+    monkeypatch.setenv("SENTINEL_WEIGHTS", str(wdir))
+    clip, _ = synth_clip(duration_s=0.4)
+    base = {"runtime": {"device": "cpu"}}
+    with pytest.raises(DetectorUnavailable):                      # по умолчанию резерв не подставляется
+        detect(clip, config=base)
+    detect(clip, config={**base, "closed_set": {"hf_fallback_ids": [dfine]}})
+    st = last_stats()
+    assert st["backends"] == ["dfine-medium-obj2coco"] and st["status"] == "degraded"
+    assert any("резервный" in w for w in st["warnings"])

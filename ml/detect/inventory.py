@@ -303,6 +303,21 @@ def _owl_frame_times(ts: Sequence[float], t: float, max_frames: int) -> set[floa
 
 # ---------------------------------------------------------------- desk_inventory
 
+def _offer(frame_best: dict[str, tuple[float, tuple, str]], kind: str, score: float, box: Any, src: str) -> None:
+    """Лучшее свидетельство вида на кадре (max score)."""
+    if kind not in frame_best or score > frame_best[kind][0]:
+        frame_best[kind] = (float(score), tuple(round(float(v), 5) for v in box), src)
+
+
+def _pick(frame_best: dict[str, tuple[float, tuple, str]], mask: np.ndarray, inz: np.ndarray, sc: np.ndarray,
+          boxes: np.ndarray, kind: str, src: str) -> None:
+    """Лучший OWL-патч в зоне, прошедший условие mask, → свидетельство вида kind."""
+    m = mask & inz
+    if m.any():
+        j = int(np.argmax(np.where(m, sc, -1.0)))
+        _offer(frame_best, kind, sc[j], boxes[j], src)
+
+
 def desk_inventory(clip: Any, t: float, zones: Any, *, config: Optional[dict[str, Any]] = None) -> DeskInventory:
     """Что лежит на кассовом столе (зоны desk ∪ cash_tray) в окне вокруг t: present / unknown по видам KINDS."""
     from .pipeline import _RUN_LOCK
@@ -344,10 +359,6 @@ def _desk_inventory(clip: Any, t: float, zones: Any, config: Optional[dict[str, 
         n_ok += 1
         frame_best: dict[str, tuple[float, tuple, str]] = {}
 
-        def offer(kind: str, score: float, box: Any, src: str) -> None:
-            if kind not in frame_best or score > frame_best[kind][0]:
-                frame_best[kind] = (float(score), tuple(round(float(v), 5) for v in box), src)
-
         d = _closed_dets(clip, tk, frame, closed) if closed else RawDets()
         frac = box_zone_fraction(d.boxes, polys)
         persons = [i for i, lab in enumerate(d.labels) if lab == "person" and d.scores[i] >= person_thr]
@@ -365,7 +376,7 @@ def _desk_inventory(clip: Any, t: float, zones: Any, config: Optional[dict[str, 
             if kind == "phone":
                 phone_cands.append((float(d.scores[i]), d.boxes[i], src))
                 continue
-            offer(kind, d.scores[i], d.boxes[i], src)
+            _offer(frame_best, kind, d.scores[i], d.boxes[i], src)
         for k in ("cup", "food", "phone", "bag"):
             checked[k] += 1
         if has_ft:
@@ -379,23 +390,18 @@ def _desk_inventory(clip: Any, t: float, zones: Any, config: Optional[dict[str, 
             inz = box_zone_fraction(boxes, polys) >= min_ov if len(boxes) else np.zeros(0, bool)
             src = getattr(scorer, "name", "owlv2")
 
-            def pick(mask: np.ndarray, sc: np.ndarray, kind: str, tag: str) -> None:
-                m = mask & inz
-                if m.any():
-                    j = int(np.argmax(np.where(m, sc, -1.0)))
-                    offer(kind, sc[j], boxes[j], f"{src}:{tag}")
-
-            pick(G["cash"] >= rthr.get("cash", 0.25), G["cash"], "cash", "cash")
+            _pick(frame_best, G["cash"] >= rthr.get("cash", 0.25), inz, G["cash"], boxes, "cash", f"{src}:cash")
             confirmed = (G["cash_bag"] >= rthr.get("cash_bag", 0.3)) & (G["cash_bag"] - G["generic_bag"] >= margin)
-            pick(confirmed, G["cash_bag"], "cash_bag", "cash_bag>generic_bag")
+            _pick(frame_best, confirmed, inz, G["cash_bag"], boxes, "cash_bag", f"{src}:cash_bag>generic_bag")
             unconfirmed = (G["cash_bag"] >= rthr.get("cash_bag", 0.3)) & ~confirmed
             if (unconfirmed & inz).any():
                 notes["cash_bag"].append("есть сумка, похожая на инкассаторскую, но контраст с обычной сумкой не пройден")
-                pick(unconfirmed, G["cash_bag"], "bag", "bag?cash_bag_unconfirmed")
+                _pick(frame_best, unconfirmed, inz, G["cash_bag"], boxes, "bag", f"{src}:bag?cash_bag_unconfirmed")
             generic = (G["generic_bag"] >= rthr.get("generic_bag", 0.3)) & (G["generic_bag"] - G["cash_bag"] >= margin)
-            pick(generic, G["generic_bag"], "personal_item", "generic_bag")
-            pick(generic, G["generic_bag"], "bag", "generic_bag")
-            pick(G["personal_item"] >= rthr.get("personal_item", 0.3), G["personal_item"], "personal_item", "jacket/coat")
+            _pick(frame_best, generic, inz, G["generic_bag"], boxes, "personal_item", f"{src}:generic_bag")
+            _pick(frame_best, generic, inz, G["generic_bag"], boxes, "bag", f"{src}:generic_bag")
+            _pick(frame_best, G["personal_item"] >= rthr.get("personal_item", 0.3), inz, G["personal_item"], boxes,
+                  "personal_item", f"{src}:jacket/coat")
             mobile = (G["phone"] >= rthr.get("phone", 0.25)) & (G["phone"] - G["landline"] >= margin) & inz
             if mobile.any():
                 j = int(np.argmax(np.where(mobile, G["phone"], -1.0)))
@@ -404,8 +410,8 @@ def _desk_inventory(clip: Any, t: float, zones: Any, config: Optional[dict[str, 
             land = (G["landline"] >= rthr.get("landline", 0.25)) & (G["landline"] - G["phone"] >= margin) & inz
             if land.any():
                 landline_all.append(boxes[land])
-            pick(G["cup"] >= rthr.get("cup", 0.25), G["cup"], "cup", "cup")
-            pick(G["food"] >= rthr.get("food", 0.3), G["food"], "food", "food")
+            _pick(frame_best, G["cup"] >= rthr.get("cup", 0.25), inz, G["cup"], boxes, "cup", f"{src}:cup")
+            _pick(frame_best, G["food"] >= rthr.get("food", 0.3), inz, G["food"], boxes, "food", f"{src}:food")
             for k in OWL_ONLY:
                 checked[k] += 1
         for kind, (sc, box, src) in frame_best.items():

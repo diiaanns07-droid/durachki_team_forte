@@ -23,11 +23,14 @@ from .boxes import RawDets, area, classwise_nms, hflip_boxes, iou_matrix
 
 log = logging.getLogger("ml.detect.autolabel")
 
-FINETUNE_CLASSES = ["cash", "cash_bag", "safe_open", "money_counter", "cell_phone"]
+# Нестандартные классы домена (метки контракта), ради которых дообучаем; совпадают с разметкой det-labels
+# (safe_closed → contract_label safe). person/cup/food покрывает COCO; их можно добавить через --classes.
+FINETUNE_CLASSES = ["cash", "cash_bag", "safe", "safe_open", "money_counter", "cell_phone", "door_open"]
 IMG_EXT = {".jpg", ".jpeg", ".png", ".bmp"}
 
 # Пороги для предложений строже рантайма: лучше пропустить, чем засорить проверку мусором
-DEFAULT_MIN_SCORE = {"cash": 0.30, "cash_bag": 0.30, "safe_open": 0.30, "money_counter": 0.30, "cell_phone": 0.30}
+DEFAULT_MIN_SCORE = {"cash": 0.30, "cash_bag": 0.30, "safe": 0.30, "safe_open": 0.30, "money_counter": 0.30,
+                     "cell_phone": 0.30, "door_open": 0.30}
 
 PROPOSAL_WARNING = ("Псевдоразметка: предложения модели для ручной проверки, НЕ истинные bbox. "
                     "Не использовать для обучения/оценки без проверки человеком (mark-verified).")
@@ -138,10 +141,38 @@ def label_status(coco: dict[str, Any], annotator: Optional[str] = None) -> str:
     return "unknown"
 
 
-def default_images_root(ann_path: str | Path) -> Path:
-    """Корень изображений для COCO file_name: <dir>/images, если есть, иначе папка аннотаций."""
+def default_images_root(ann_path: str | Path, coco: Optional[dict[str, Any]] = None) -> Path:
+    """Корень изображений для COCO file_name.
+    1) info.images_root (так пишет det-labels/export_coco.py: «data/frames», от корня репо);
+    2) иначе <dir>/images, если есть; 3) иначе папка аннотаций."""
+    from .weights import REPO_ROOT
+
+    root = ((coco or {}).get("info") or {}).get("images_root")
+    if root:
+        p = Path(root).expanduser()
+        return p if p.is_absolute() else REPO_ROOT / p
     d = Path(ann_path).parent
     return d / "images" if (d / "images").is_dir() else d
+
+
+def category_label(cat: dict[str, Any]) -> Optional[str]:
+    """Категория COCO → метка контракта: contract_label (det-labels: safe_closed → safe), иначе по имени."""
+    from .labels import map_label
+
+    cl = cat.get("contract_label")
+    if cl:
+        lab = map_label(str(cl))
+        if lab is not None:
+            return lab
+    return map_label(str(cat.get("name", "")))
+
+
+def group_key(im: dict[str, Any]) -> str:
+    """Группа для split без утечки: group (det-labels: одинаковые по md5 ролики вместе) → video_id → video → папка."""
+    for k in ("group", "video_id", "video"):
+        if im.get(k):
+            return str(im[k]).replace("Х", "X").replace("х", "x")
+    return video_key(im["file_name"])
 
 
 def mark_verified(coco: dict[str, Any], reviewer: str) -> dict[str, Any]:

@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 from ..config import env_flag
 from ..labels import COCO_TO_LABEL
-from ..weights import is_cached, resolve, weights_dir
+from ..weights import is_cached, missing_message, resolve
 from .base import FrameDetector, resolve_device
 from .mock import MockColorDetector
 
@@ -23,6 +23,7 @@ class Backends:
     open: Optional[FrameDetector] = None
     mock: bool = False
     warnings: list[str] = field(default_factory=list)
+    fallback_used: bool = False      # загружен не основной closed-set (только если явно задан hf_fallback_ids)
 
     @property
     def names(self) -> list[str]:
@@ -55,7 +56,7 @@ def _mock_backends(cfg: dict[str, Any]) -> Backends:
     return Backends(closed=[closed], open=opn, mock=True)
 
 
-def _load_closed(cfg: dict[str, Any], warnings: list[str]) -> list[FrameDetector]:
+def _load_closed(cfg: dict[str, Any], warnings: list[str], flags: Optional[dict[str, bool]] = None) -> list[FrameDetector]:
     cs = cfg["closed_set"]
     rt = cfg["runtime"]
     out: list[FrameDetector] = []
@@ -77,18 +78,25 @@ def _load_closed(cfg: dict[str, Any], warnings: list[str]) -> list[FrameDetector
         elif kind == "hf":
             from .hf_detr import HFDetrBackend
 
-            for mid in [cs["hf_model_id"], *cs.get("hf_fallback_ids", [])]:
+            primary = cs["hf_model_id"]
+            # резервные модели — только явно перечисленные в конфиге (по умолчанию нет): без тихой подмены детектора
+            for mid in [primary, *cs.get("hf_fallback_ids", [])]:
                 if not is_cached(mid):
-                    warnings.append(f"detect: weights for {mid} not found locally ({weights_dir()}); "
-                                    "run setup: python -m ml.detect.weights --download")
+                    warnings.append(f"detect: {missing_message(mid)}")
                     continue
                 try:
                     out.append(HFDetrBackend(mid, device=rt["device"], fp16=rt["fp16"], input_size=cs["input_size"],
                                              min_score=cs["min_score"], max_dets=cs["max_dets_per_frame"],
                                              allow_proxy=cs.get("proxy_labels", True)))
-                    break
                 except Exception as e:  # noqa: BLE001
                     warnings.append(f"detect: closed-set {mid} not loaded: {type(e).__name__}: {e}")
+                    continue
+                if mid != primary:
+                    warnings.append(f"detect: основной детектор {primary} не загружен — используется явно заданный "
+                                    f"резервный {mid} (пороги не калиброваны под него; status=degraded)")
+                    if flags is not None:
+                        flags["fallback_used"] = True
+                break
     return out
 
 
@@ -97,7 +105,7 @@ def _load_open(cfg: dict[str, Any], warnings: list[str]) -> Optional[FrameDetect
     if not ov.get("enabled", True):
         return None
     if not is_cached(ov["hf_model_id"]):
-        warnings.append(f"detect: open-vocab weights {ov['hf_model_id']} not found locally — stage skipped")
+        warnings.append(f"detect: open-vocab {missing_message(ov['hf_model_id'])} — stage skipped")
         return None
     try:
         from .owlv2 import OwlV2Backend
@@ -132,14 +140,16 @@ def get_backends(cfg: dict[str, Any]) -> Backends:
             be = _mock_backends(cfg)
         else:
             warnings: list[str] = []
-            closed = _load_closed(cfg, warnings)
+            flags: dict[str, bool] = {}
+            closed = _load_closed(cfg, warnings, flags)
             opn = _load_open(cfg, warnings)
             for w in warnings:
                 log.warning(w)
             if not closed:
                 # не кэшируем: после setup (скачивания весов) следующий вызов подхватит модели
                 raise DetectorUnavailable("; ".join(warnings) or "no closed-set detector configured")
-            be = Backends(closed=closed, open=opn, mock=False, warnings=warnings)
+            be = Backends(closed=closed, open=opn, mock=False, warnings=warnings,
+                          fallback_used=flags.get("fallback_used", False))
         _CACHE[key] = be
         return be
 
@@ -180,7 +190,7 @@ def get_inventory_scorer(cfg: dict[str, Any], warnings: list[str]) -> Any:
             sc: Any = MockOpenVocabScorer(texts, tc, tolerance=m["tolerance"], min_area_px=m["min_area_px"])
         else:
             if not is_cached(ov["hf_model_id"]):
-                warnings.append(f"inventory: open-vocab weights {ov['hf_model_id']} not found locally — "
+                warnings.append(f"inventory: open-vocab {missing_message(ov['hf_model_id'])} — "
                                 "rare_open_vocab недоступен, работаю как baseline")
                 return None
             try:

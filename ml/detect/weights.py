@@ -73,6 +73,14 @@ def is_cached(model_id: str) -> bool:
     return local_model_dir(model_id) is not None or find_cache_dir(model_id) is not None
 
 
+def missing_message(model_id: str) -> str:
+    """Явное сообщение «весов нет локально»: что искали и где; сеть не трогается, mock не включается."""
+    sub = "models--" + model_id.replace("/", "--")
+    places = [str(c / sub) for c in hf_cache_candidates()] + [str(weights_dir() / "detect" / model_id.split("/")[-1])]
+    return (f"weights for {model_id} not found locally (searched: {'; '.join(places)}). "
+            "Setup (с сетью, один раз): python -m ml.detect.weights --download")
+
+
 def resolve(path_rel: str) -> Path:
     p = Path(path_rel)
     return p if p.is_absolute() else weights_dir() / p

@@ -7,7 +7,7 @@ from typing import Any, Optional, Sequence
 import numpy as np
 
 from ..boxes import RawDets, clip01, cxcywh_to_xyxy
-from ..labels import build_index_map, source_tag
+from ..labels import STANDARD_LABELS, build_index_map, source_tag
 from ..weights import local_model_dir, pretrained_kwargs
 from .base import group_by_shape, resolve_device, torch_preprocess
 
@@ -77,7 +77,8 @@ class HFDetrBackend:
         self.mean = getattr(processor, "image_mean", None) if do_norm else None
         self.std = getattr(processor, "image_std", None) if do_norm else None
         id2label = {int(k): v for k, v in (getattr(self.model.config, "id2label", {}) or {}).items()}
-        self.index_map = build_index_map(id2label, allow_proxy=allow_proxy)
+        # общий (COCO) детектор не выдаёт cash/safe/door/... даже если в id2label есть похожие имена
+        self.index_map = build_index_map(id2label, allow_proxy=allow_proxy, allowed=STANDARD_LABELS)
         if not self.index_map:
             raise RuntimeError(f"{model_id}: ни один класс id2label не отображается в LABELS")
         self._cls_idx = sorted(self.index_map)

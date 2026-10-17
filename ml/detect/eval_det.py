@@ -17,7 +17,7 @@ from typing import Any, Optional, Sequence
 
 import numpy as np
 
-from .autolabel import label_status
+from .autolabel import category_label, default_images_root, label_status
 from .boxes import iou_matrix
 
 IOU_THRS = np.round(np.arange(0.5, 0.951, 0.05), 2)
@@ -116,7 +116,11 @@ def run_predictions(gt: dict[str, Any], frames_root: str | Path) -> list[dict[st
 
     cfg = load_config()
     be = get_backends(cfg)
-    name_to_id = {c["name"]: c["id"] for c in gt["categories"]}
+    label_to_id: dict[str, int] = {}
+    for c in gt["categories"]:      # метка контракта → категория GT (det-labels: safe ← safe_closed)
+        lab = category_label(c)
+        if lab is not None:
+            label_to_id.setdefault(lab, c["id"])
     out = []
     for im in gt["images"]:
         img = cv2.imread(str(Path(frames_root) / im["file_name"]))
@@ -128,10 +132,10 @@ def run_predictions(gt: dict[str, Any], frames_root: str | Path) -> list[dict[st
             parts.append(be.open.predict([img])[0])
         d = classwise_nms(RawDets.concat(parts), cfg["merge"]["iou_thr"])
         for i, lab in enumerate(d.labels):
-            if lab not in name_to_id:
+            if lab not in label_to_id:
                 continue
             x1, y1, x2, y2 = (float(v) for v in d.boxes[i])
-            out.append({"image_id": im["id"], "category_id": name_to_id[lab], "score": float(d.scores[i]),
+            out.append({"image_id": im["id"], "category_id": label_to_id[lab], "score": float(d.scores[i]),
                         "bbox": [x1 * w, y1 * h, (x2 - x1) * w, (y2 - y1) * h]})
     return out
 
@@ -147,7 +151,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     a = ap.parse_args(argv)
     gt = json.loads(Path(a.gt).read_text(encoding="utf-8"))
     if a.run:
-        preds = run_predictions(gt, a.frames)
+        preds = run_predictions(gt, a.frames or default_images_root(a.gt, gt))
     else:
         preds = json.loads(Path(a.pred).read_text(encoding="utf-8"))
     rep = evaluate(gt, preds, annotator=a.annotator)

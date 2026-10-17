@@ -22,7 +22,8 @@ from typing import Any, Optional, Sequence
 
 import numpy as np
 
-from .autolabel import DEFAULT_DATASET, FINETUNE_CLASSES, default_images_root, label_status, video_key
+from .autolabel import (DEFAULT_DATASET, FINETUNE_CLASSES, category_label, default_images_root, group_key,
+                        label_status)
 from .config import load_config
 from .weights import local_model_dir, pretrained_kwargs
 
@@ -52,9 +53,14 @@ def load_verified(path: str | Path, annotator: Optional[str] = None) -> dict[str
 
 
 def split_by_video(coco: dict[str, Any], val_frac: float = 0.2, seed: int = 0) -> tuple[list[int], list[int]]:
+    """(train_ids, val_ids). Если у всех кадров есть split (det-labels фиксирует его в split.json) — берём его;
+    иначе делим по группам видео (group_key: дубликаты по md5 не разъезжаются по train/val)."""
+    ims = coco["images"]
+    if ims and all(im.get("split") in ("train", "val") for im in ims):
+        return ([im["id"] for im in ims if im["split"] == "train"], [im["id"] for im in ims if im["split"] == "val"])
     groups: dict[str, list[int]] = {}
-    for im in coco["images"]:
-        groups.setdefault(im.get("video") or video_key(im["file_name"]), []).append(im["id"])
+    for im in ims:
+        groups.setdefault(group_key(im), []).append(im["id"])
     keys = sorted(groups)
     random.Random(seed).shuffle(keys)
     n_val = int(round(len(keys) * val_frac)) if len(keys) > 1 else 0
@@ -88,11 +94,11 @@ class CocoDetDataset:
         self.aug = augment
         self.images = {im["id"]: im for im in coco["images"]}
         self.ids = [i for i in image_ids if i in self.images]
-        cat_name = {c["id"]: c["name"] for c in coco["categories"]}
+        cat_label = {c["id"]: category_label(c) for c in coco["categories"]}
         self.cls_idx = {c: i for i, c in enumerate(classes)}
         self.anns: dict[int, list[tuple[list[float], int]]] = {i: [] for i in self.ids}
         for a in coco["annotations"]:
-            name = cat_name.get(a["category_id"])
+            name = cat_label.get(a["category_id"])
             if a["image_id"] in self.anns and name in self.cls_idx and not a.get("iscrowd", 0):
                 self.anns[a["image_id"]].append(([float(v) for v in a["bbox"]], self.cls_idx[name]))
 
@@ -129,7 +135,7 @@ def collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
     return {"pixel_values": torch.stack([b["pixel_values"] for b in batch]), "labels": [b["labels"] for b in batch]}
 
 
-def train(coco_path: str | Path, frames_root: str | Path, out_dir: str | Path, base_model: Optional[str] = None,
+def train(coco_path: str | Path, frames_root: Optional[str | Path], out_dir: str | Path, base_model: Optional[str] = None,
           classes: Sequence[str] = FINETUNE_CLASSES, epochs: int = 30, batch: int = 8, lr: float = 1e-4,
           max_steps: int = -1, val_frac: float = 0.2, augment: bool = True, model: Any = None,
           processor: Any = None, seed: int = 0, annotator: Optional[str] = None) -> Path:
@@ -137,6 +143,7 @@ def train(coco_path: str | Path, frames_root: str | Path, out_dir: str | Path, b
     from transformers import Trainer, TrainingArguments
 
     coco = load_verified(coco_path, annotator)
+    frames_root = Path(frames_root) if frames_root else default_images_root(coco_path, coco)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     classes = list(classes)
@@ -171,7 +178,8 @@ def train(coco_path: str | Path, frames_root: str | Path, out_dir: str | Path, b
     info = coco.get("info", {})
     (out / "train_meta.json").write_text(json.dumps({
         "base_model": base, "classes": classes, "n_train_images": len(ds_tr), "n_val_images": len(va_ids),
-        "val_videos": sorted({video_key(coco_im["file_name"]) for coco_im in coco["images"] if coco_im["id"] in set(va_ids)}),
+        "val_videos": sorted({group_key(im) for im in coco["images"] if im["id"] in set(va_ids)}),
+        "frames_root": str(frames_root),
         "labels_status": info.get("label_status"), "labels_reviewer": info.get("reviewer") or info.get("annotator"),
         "labels_verified_at": info.get("verified_at"),
         "epochs": epochs, "max_steps": max_steps, "lr": lr, "batch": batch,
@@ -235,7 +243,8 @@ def main(argv: Optional[list[str]] = None) -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     t = sub.add_parser("train")
     t.add_argument("--coco", default=str(DEFAULT_DATASET), help="COCO (по умолчанию datasets/det/annotations.json)")
-    t.add_argument("--frames", default="", help="корень изображений (по умолчанию <dir>/images)")
+    t.add_argument("--frames", default="", help="корень изображений (по умолчанию info.images_root или <dir>/images)")
+    t.add_argument("--classes", default=",".join(FINETUNE_CLASSES), help="метки контракта через запятую")
     t.add_argument("--annotator", default=None, help="автор ручной разметки (обязателен для файла без mark-verified)")
     t.add_argument("--out", required=True)
     t.add_argument("--base", default=None)
@@ -249,9 +258,9 @@ def main(argv: Optional[list[str]] = None) -> None:
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO)
     if a.cmd == "train":
-        frames = a.frames or str(default_images_root(a.coco))
-        print(train(a.coco, frames, a.out, a.base, epochs=a.epochs, batch=a.batch, lr=a.lr, augment=not a.no_augment,
-                    annotator=a.annotator))
+        classes = [c.strip() for c in a.classes.split(",") if c.strip()]
+        print(train(a.coco, a.frames or None, a.out, a.base, classes=classes, epochs=a.epochs, batch=a.batch, lr=a.lr,
+                    augment=not a.no_augment, annotator=a.annotator))
     else:
         print(export_onnx(a.model, a.out))
 

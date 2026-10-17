@@ -47,8 +47,10 @@ class RawDets:
 def clip01(boxes: np.ndarray) -> np.ndarray:
     b = np.clip(np.asarray(boxes, dtype=np.float32).reshape(-1, 4), 0.0, 1.0)
     # гарантируем x1<=x2, y1<=y2
-    x1 = np.minimum(b[:, 0], b[:, 2]); x2 = np.maximum(b[:, 0], b[:, 2])
-    y1 = np.minimum(b[:, 1], b[:, 3]); y2 = np.maximum(b[:, 1], b[:, 3])
+    x1 = np.minimum(b[:, 0], b[:, 2])
+    x2 = np.maximum(b[:, 0], b[:, 2])
+    y1 = np.minimum(b[:, 1], b[:, 3])
+    y2 = np.maximum(b[:, 1], b[:, 3])
     return np.stack([x1, y1, x2, y2], axis=1)
 
 

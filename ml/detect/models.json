@@ -19,9 +19,9 @@
     "license_source": "https://huggingface.co/ustc-community/dfine-medium-obj2coco (model card metadata); code: https://github.com/Peterande/D-FINE/blob/master/LICENSE",
     "size_mb": 80,
     "size_status": "approximate",
-    "purpose": "Резервный closed-set (closed_set.hf_fallback_ids): грузится, только если baseline RT-DETRv2 не загрузился. Скачан у L1 (weights/hf/hub)",
-    "role": "fallback",
-    "notes": "Сравнение с baseline как отдельная гипотеза — не включать по умолчанию без замера L2. Лицензию веса проверить: python -m ml.detect.licenses --check"
+    "purpose": "Явная альтернатива closed-set (closed_set.hf_model_id или hf_fallback_ids); по умолчанию НЕ используется и молча не подставляется. Скачан у L1 (weights/hf/hub)",
+    "role": "optional",
+    "notes": "Выбирать только после замера L2 (probe). При явном резерве status=degraded + warning. Лицензию веса проверить: python -m ml.detect.licenses --check"
   },
   {
     "name": "OWLv2 base patch16 ensemble",

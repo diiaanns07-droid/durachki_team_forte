@@ -329,8 +329,8 @@ def _detect(clip: VideoClip, every_n: int, config: Optional[dict[str, Any]]) -> 
     stats["coverage"] = coverage(times, base_stride, processed)
     if stats["coverage"]["fraction"] < 1.0:
         stats["status"] = "partial"      # часть кадров не проанализирована: «нет детекций» там = неизвестно
-    elif broken or stats["extras_cut"]:
-        stats["status"] = "degraded"     # кадры покрыты, но часть стадий отключена
+    elif broken or stats["extras_cut"] or be.fallback_used:
+        stats["status"] = "degraded"     # кадры покрыты, но часть стадий отключена или работает резервный детектор
     _stats().update(stats)
     out.sort(key=lambda d: (d.t, d.label, -d.score))
     return out

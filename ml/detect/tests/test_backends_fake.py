@@ -130,3 +130,55 @@ def test_owlv2_raw_score_all_queries_unpadded():
     assert b[0].tolist() == pytest.approx([0.2 * sx, 0.4, 0.3 * sx, 0.6], abs=1e-5)
     assert p[0, 0] > 0.9 and p[0, 1] < 0.1 and p[1, 1] > 0.9
     assert be.predict([np.zeros((848, 464, 3), np.uint8)])[0].labels == []   # без label запросы не дают Detection
+
+
+@pytest.mark.parametrize("hw", [(848, 464), (464, 848), (100, 100)])
+def test_hf_detr_box_is_independent_of_frame_size_and_orientation(hw):
+    """Модель видит кадр, растянутый в квадрат: нормированный бокс не зависит от размера/ориентации кадра,
+    пиксели = норм. × (W, H)."""
+    from ml.detect.backends.hf_detr import HFDetrBackend
+
+    m = FakeDetr([[[5.0]]], [[[0.25, 0.75, 0.1, 0.2]]], {0: "person"})
+    be = HFDetrBackend("fake/rtdetr", device="cpu", model=m, processor=SimpleNamespace(size={"height": 32, "width": 32}),
+                       min_score=0.5)
+    h, w = hw
+    d = be.predict([np.zeros((h, w, 3), np.uint8)])[0]
+    assert d.labels == ["person"]
+    assert d.boxes[0].tolist() == pytest.approx([0.2, 0.65, 0.3, 0.85])
+    px = d.boxes[0] * np.array([w, h, w, h])
+    assert px.tolist() == pytest.approx([0.2 * w, 0.65 * h, 0.3 * w, 0.85 * h], rel=1e-5)
+
+
+def test_hf_detr_mixed_frame_sizes_in_one_call():
+    from ml.detect.backends.hf_detr import HFDetrBackend
+
+    m = FakeDetr([[[5.0]]], [[[0.5, 0.5, 0.2, 0.2]]], {0: "cup"})
+    be = HFDetrBackend("fake/rtdetr", device="cpu", model=m, processor=SimpleNamespace(size={"height": 32, "width": 32}),
+                       min_score=0.5)
+    res = be.predict([np.zeros((848, 464, 3), np.uint8), np.zeros((464, 848, 3), np.uint8),
+                      np.zeros((848, 464, 3), np.uint8)])
+    assert len(res) == 3 and all(r.labels == ["cup"] for r in res)
+    assert sorted(m.seen) == [(1, 3, 32, 32), (2, 3, 32, 32)]       # группы по размеру кадра
+
+
+def test_owlv2_landscape_frame_unpadding():
+    """Горизонтальный кадр (другой угол): OWLv2 паддит снизу; y пересчитывается ×S/H, x не меняется."""
+    from ml.detect.backends.owlv2 import OwlV2Backend
+
+    m = FakeOwl([[[4.0]]], [[[0.5, 0.25, 0.2, 0.1]]])
+    be = OwlV2Backend("fake/owl", [{"text": "open safe", "label": "safe_open", "thr": 0.3}], device="cpu",
+                      input_size=96, model=m, processor=SimpleNamespace(tokenizer=FakeTok(), image_processor=None),
+                      max_area={"default": 0.9})
+    h, w = 464, 848
+    d = be.predict([np.zeros((h, w, 3), np.uint8)])[0]
+    sy = w / h
+    assert d.labels == ["safe_open"]
+    assert d.boxes[0].tolist() == pytest.approx([0.4, 0.2 * sy, 0.6, 0.3 * sy], abs=1e-5)
+
+
+def test_preprocess_pads_landscape_at_bottom():
+    from ml.detect.backends.base import torch_preprocess
+
+    f = np.full((2, 4, 3), 255, np.uint8)
+    x = torch_preprocess([f], (4, 4), "cpu", torch.float32, pad_square=True, pad_value=0.5)
+    assert float(x[0, 0, 0, 0]) == pytest.approx(1.0) and float(x[0, 0, 3, 0]) == pytest.approx(0.5)
