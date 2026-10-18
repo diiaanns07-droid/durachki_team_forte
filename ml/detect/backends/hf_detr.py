@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Optional, Sequence
 
 import numpy as np
@@ -69,8 +70,11 @@ class HFDetrBackend:
         self.model = model.eval().to(self.device)
         if self.fp16:
             self.model = self.model.half()
-        if self.device.startswith("cuda"):
-            torch.backends.cudnn.benchmark = True  # вход фиксированного размера
+        # cudnn.benchmark подбирает алгоритм свёрток заново на КАЖДУЮ новую форму входа (размер батча меняется:
+        # последний батч, ключевые кадры). На коротком ролике подбор не окупается: замер на RTX 4050 Laptop,
+        # X-1 (26 с) — 128 с с benchmark против 13.5 с без него. Включать только явно для длинных потоков.
+        if self.device.startswith("cuda") and os.environ.get("SENTINEL_DETECT_CUDNN_BENCHMARK") == "1":
+            torch.backends.cudnn.benchmark = True
         self.size = _size_from_processor(processor, input_size) if processor is not None else (input_size, input_size)
         self.rescale = float(getattr(processor, "rescale_factor", 1 / 255.0)) if processor is not None else 1 / 255.0
         do_norm = bool(getattr(processor, "do_normalize", False)) if processor is not None else False
