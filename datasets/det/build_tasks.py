@@ -100,7 +100,7 @@ def to_task(r: dict, boxes: list[dict], model_version: str) -> dict:
                        "value": {"x": x1 / W * 100, "y": y1 / H * 100, "width": (x2 - x1) / W * 100,
                                  "height": (y2 - y1) / H * 100, "rotation": 0, "rectanglelabels": [b["label"]]}})
     task = {"data": {"image": LS_PREFIX + r["file"], "file": r["file"], "video_id": r["video_id"],
-                     "group": r["group"], "t_sec": r["t_sec"], "dense": r["dense"]}}
+                     "group": r["group"], "t_sec": r["t_sec"], "dense": r["dense"], "qa": "", "qa_note": ""}}
     if model_version:
         task["predictions"] = [{"model_version": model_version, "result": result,
                                 "score": round(sum(b["score"] for b in boxes) / len(boxes), 4) if boxes else 0.0}]

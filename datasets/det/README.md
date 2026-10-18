@@ -145,6 +145,15 @@ ffmpeg берётся из PATH, переменной `FFMPEG` или пакет
    ```
    Черновой COCO помечен в `info.status` и в README как **не проверенный человеком**. Статус «проверено
    человеком» даёт только `ls_project.py export` после Submit в Label Studio.
+4б. **Контрольный проход (необязательно, сокращает ручную проверку).** `qa_sheets.py` рисует готовую разметку с
+   подписанными классами. Второй, независимый проверяющий (17.10 — Claude) пишет в `data/frames/_review/qa/results/`,
+   что не так: класс, лишняя рамка, неплотная рамка, пропуск, состояние сейфа или двери. После этого
+   `ls_project.py tabs` создаёт вкладку «0 · Спорные — проверить человеку» и выводит над кадром подсказку контроля.
+   17.10 спорными оказались 173 из 700 кадров. Человеку остаётся проверить их, а остальное — выборочно.
+   ```powershell
+   & $PY datasets/det/qa_sheets.py
+   & $PY datasets/det/ls_project.py tabs
+   ```
 5. **Экспорт в COCO** (можно запускать сколько угодно раз по ходу разметки):
    ```powershell
    & $PY datasets/det/ls_project.py export         # → annotations.json, annotations_{train,val}.json, split.json, README
@@ -174,6 +183,7 @@ img = coco["images"][0]; path = root / img["file_name"]     # data/frames/X-1/X-
 | `ls_project.py` | запуск Label Studio, проект, импорт, экспорт |
 | `review_sheets.py` | листы проверки: кадр + пронумерованные рамки-кандидаты |
 | `apply_review.py` | решения проверки → Label Studio (пред-разметка) и черновой COCO |
+| `qa_sheets.py` | контрольные листы: готовая разметка с классами для второго прохода |
 | `export_coco.py` | JSON Label Studio → COCO + сплит + статистика в README |
 | `models.json` | модели и лицензии (проверяет `scripts/check_licenses.py`) |
 | `tests/` | `datasets/det/.venv-owl/Scripts/python -m pytest datasets/det/tests -q` |
