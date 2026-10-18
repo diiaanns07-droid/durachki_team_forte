@@ -1,0 +1,25 @@
+# ml/vlm (A11). Лицензии: все Apache-2.0 / MIT / BSD.
+# Версии согласованы с проверенным локально lock L1 (ветка data/labels, tools/dataprep/requirements-l1.lock.txt):
+# torch 2.11.0+cu128, transformers 5.20.1, accelerate 1.15.0, bitsandbytes 0.50.2, huggingface-hub 2.2.0,
+# opencv-python-headless 4.14 (< 5). Ставить по lock L1; здесь — совместимые диапазоны, без верхних границ,
+# которые откатили бы проверенные версии.
+
+# --- базовые (нужны всегда; импорт пакета их не тянет до первого вызова)
+numpy>=1.26            # BSD-3
+Pillow>=10.1           # MIT-CMU (HPND)
+PyYAML>=6.0            # MIT
+
+# --- основной backend: transformers in-process (GPU). torch — CUDA-сборкой (L1: 2.11.0+cu128)
+torch>=2.4             # BSD-3
+transformers>=4.57.1   # Apache-2.0; Qwen3-VL с 4.57; путь адаптера проверен L1 на 5.20.1
+accelerate>=1.0        # Apache-2.0 (device_map)
+bitsandbytes>=0.45     # MIT; nf4, L1: 0.50.2
+huggingface_hub>=0.25  # Apache-2.0; офлайн-кэш, проверка лицензии снапшота (L1: 2.2.0)
+
+# --- опционально
+# opencv-python-headless>=4.9,<5  # Apache-2.0 — CLI try/calibrate/compare без ml.ingest (L1: 4.14)
+# autoawq>=0.2.8                  # MIT — только пресет qwen25vl7b_awq (на 8 ГБ не влезает, замер L1)
+# llama-cpp-python>=0.3.16        # MIT — только backend llamacpp_python
+
+# --- тесты (без GPU/весов/сети)
+pytest>=8

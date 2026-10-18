@@ -1,0 +1,25 @@
+# pose_rules + VLM как ограниченная проверка кандидатов (vlm_verify). Поиск VLM по всему видео выключен.
+pipeline_version: "1.1.0-pose_rules_vlm"
+stages:
+  scene: false
+  rules: false
+  seqrules: true
+  temporal: false
+  vlm_verify: true
+  vlm_discover: false
+required_stages: [ingest, detect, track, pose, seqrules, fusion]
+budgets_s:
+  pose: 25
+  seqrules: 30
+  vlm_verify: 60
+gpu:
+  vram_gb:
+    seqrules: 1.0
+    vlm_verify: 3.0
+warmup:
+  vlm: true
+timeouts:
+  min_s: 150.0
+  hard_factor: 6.0
+executor:
+  load_clip_timeout_s: 120

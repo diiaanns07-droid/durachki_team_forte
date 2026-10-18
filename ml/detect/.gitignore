@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+# данные/веса никогда не коммитим
+*.mov
+*.mp4
+*.jpg
+*.jpeg
+*.png
+*.onnx
+*.pt
+*.pth
+*.safetensors
+*.gguf
+runs/

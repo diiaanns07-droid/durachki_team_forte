@@ -1,0 +1,8 @@
+# eval/ (A16). Python 3.11. Внешние бинарники: ffmpeg/ffprobe (robustness, ffprobe-инфо).
+openpyxl>=3.1           # MIT — только eval.labels для xlsx (L1 строит labels.csv без него)
+PyYAML>=6.0             # MIT — config.yaml, norms/catalog.yaml (lock L1: 6.0.3)
+numpy>=1.26,<3           # BSD
+requests>=2.31,<3        # Apache-2.0 — run --api, jury_sim
+jsonschema>=4.21,<5      # MIT — опционально: contracts/api_schema.json
+opencv-python-headless>=4.9,<5   # Apache-2.0 — тесты и миниатюры отчёта (lock L1: 4.14.0.94)
+pytest>=8                # MIT (lock L1: 9.1.1)

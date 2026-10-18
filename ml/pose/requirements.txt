@@ -1,0 +1,14 @@
+# ml/pose (A07). Тесты требуют только numpy, opencv-python-headless, PyYAML, pytest.
+# Версии согласованы с lock L1 (Python 3.11, opencv < 5).
+numpy>=1.24,<3
+opencv-python-headless>=4.8,<5
+PyYAML>=6.0,<7
+# RTMPose (backend rtmpose_onnx). Прод (RTX 4060, CUDA 12 + cuDNN 9); CPU-only — onnxruntime>=1.17,<2 (не ставить оба).
+onnxruntime-gpu>=1.17,<2
+# MediaPipe Pose Landmarker (backend mediapipe, opt-in). ВНИМАНИЕ: mediapipe тянет opencv-contrib-python 5.x,
+# что ломает lock opencv<5. Ставить без зависимостей (проверено в песочнице: Linux, py3.11, cv2 4.14):
+#   pip install --no-deps "mediapipe==0.10.35"
+#   pip install absl-py flatbuffers certifi matplotlib
+# (в Linux-контейнере ещё нужен системный libGLESv2: apt-get install libgles2 libegl1; Windows не проверялся)
+# dev:
+pytest>=7

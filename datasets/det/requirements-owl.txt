@@ -1,0 +1,8 @@
+# venv datasets/det/.venv-owl: нарезка кадров + пред-разметка OWLv2 + отбор кадров.
+# torch с CUDA: pip install torch --index-url https://download.pytorch.org/whl/cu128
+torch>=2.4            # BSD-3-Clause
+transformers>=4.45    # Apache-2.0
+pillow>=10            # MIT-CMU (HPND)
+numpy>=1.26           # BSD-3-Clause
+imageio-ffmpeg>=0.5   # BSD-2-Clause (обёртка; сам ffmpeg — LGPL/GPL, только как внешний инструмент нарезки)
+pytest>=8             # MIT, тесты datasets/det/tests

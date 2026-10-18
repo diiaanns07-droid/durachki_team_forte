@@ -1,0 +1,791 @@
+/*
+ * U06 — просмотр видео и кадров-доказательств (VideoPlayer, Evidence, Lightbox).
+ * Язык стартовой сцены: поверхности ink, сетка 28px под радиальной маской, тонкие кольца-рамки, короткий fade-in.
+ * Цвета — токены рабочей области U01 (--ks-*, см. index.css) с запасными значениями на случай вне .ks-ws:
+ * события и момент эпизода — --ks-event, демо и «не кадр сервера» — янтарный, действия — --ks-accent;
+ * малиновый brand не используется (по U01 он только для знака). Глобальные стили не меняем.
+ * Сцена плеера и лайтбокс всегда тёмные (поверхность для видео) — в них цвета заданы явно.
+ */
+
+/* ================================================================ сцена плеера */
+
+.stage {
+  /* высота от окна: сцена и панель управления помещаются на экране после прокрутки к плееру */
+  --stage-h: clamp(260px, calc(100vh - 248px), 820px);
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--stage-h);
+  overflow: hidden;
+  border-radius: var(--ks-radius-lg, 16px);
+  background:
+    radial-gradient(110% 80% at 50% 0%, rgb(63 79 116 / 0.3), transparent 62%),
+    linear-gradient(180deg, #121a2e 0%, #0a0f1d 100%);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06);
+}
+@supports (height: 100dvh) {
+  .stage {
+    --stage-h: clamp(260px, calc(100dvh - 248px), 820px);
+  }
+}
+/* сетка стартовой сцены видна по бокам портретного кадра — спокойный фон вместо пустых чёрных полос */
+.stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.05) 1px, transparent 1px);
+  background-size: 28px 28px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 90% at center, transparent 25%, black 80%);
+  mask-image: radial-gradient(ellipse 70% 90% at center, transparent 25%, black 80%);
+}
+/* горизонтальная запись: высота от ширины, без пустых полос сверху и снизу */
+.stageLandscape {
+  height: auto;
+  max-height: var(--stage-h);
+}
+/* видео нет / не воспроизводится: компактная панель с причиной вместо большого пустого экрана */
+.stageCompact {
+  height: auto;
+  min-height: 14rem;
+}
+
+/* кадр целиком: object-fit: contain — содержимое никогда не обрезается, поля прозрачны (видна сцена) */
+.media {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: transparent;
+}
+.stageLandscape .media {
+  height: auto;
+  max-height: var(--stage-h);
+}
+
+/* подписи поверх кадра (узкие поля): одна строка с переносом */
+.overlayTop {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  right: 0.75rem;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.5rem;
+  pointer-events: none;
+}
+/* подписи в полях по бокам портретного кадра (широкий экран) — кадр ничем не закрыт */
+.marginLeft,
+.marginRight {
+  position: absolute;
+  top: 0.75rem;
+  z-index: 2;
+  display: flex;
+  pointer-events: none;
+}
+.marginLeft {
+  left: 0.75rem;
+}
+.marginRight {
+  right: 0.75rem;
+  justify-content: flex-end;
+}
+.badge {
+  border-radius: 0.375rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: #fbbf24;
+  color: #451a03;
+}
+.episodeChip {
+  margin-left: auto;
+  max-width: min(100%, 26rem);
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  border-radius: var(--ks-radius-md, 12px);
+  padding: 0.4rem 0.7rem 0.45rem 0.45rem;
+  background: rgb(10 15 29 / 0.82);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.14), 0 10px 40px -12px rgb(16 24 40 / 0.45);
+  animation: u06-fade 0.25s ease-out backwards;
+}
+/* номер эпизода — цвет события (U01: красный только для событий и ошибок) */
+.episodeNum {
+  flex: none;
+  display: inline-flex;
+  height: 1.25rem;
+  min-width: 1.25rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  padding: 0 0.3rem;
+  background: rgb(var(--ks-event, 225 29 72));
+  color: rgb(var(--ks-event-contrast, 255 255 255));
+  font-size: 11px;
+  font-weight: 700;
+}
+.episodeTime {
+  display: block;
+  font-family: var(--ks-font-mono, ui-monospace, SFMono-Regular, Consolas, Menlo, monospace);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: rgb(255 255 255 / 0.72);
+}
+/* поверх кадра (узкие поля): только номер и интервал — плашка закрывает минимум */
+.episodeChipCompact {
+  align-items: center;
+  padding: 0.3rem 0.6rem 0.3rem 0.3rem;
+}
+.episodeChipCompact .episodeTime {
+  color: #fff;
+}
+
+.center {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  color: #cfd7e6;
+}
+
+.unavailable {
+  display: flex;
+  max-width: 30rem;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 2rem 1.25rem;
+  text-align: center;
+  color: #cfd7e6;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.unavailableTitle {
+  font-family: var(--ks-font-display, "Manrope Variable", Manrope, "Inter Variable", system-ui, sans-serif);
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+}
+.unavailableIcon {
+  display: inline-flex;
+  height: 3rem;
+  width: 3rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: rgb(255 255 255 / 0.06);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
+}
+
+/* итог действия с видео (переход не выполнен, видео ещё грузится…): заметно, закрывается, не занимает весь кадр */
+.notice {
+  position: absolute;
+  left: 0.75rem;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  z-index: 3;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  border-radius: var(--ks-radius-md, 12px);
+  padding: 0.6rem 0.6rem 0.6rem 0.75rem;
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: left;
+  background: rgb(10 15 29 / 0.92);
+  color: #fde68a;
+  box-shadow: 0 0 0 1px rgb(251 191 36 / 0.4);
+  animation: u06-fade 0.25s ease-out backwards;
+}
+.noticeInfo {
+  color: #e9edf5;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.16);
+}
+/* в компактной панели — в общем потоке, под текстом причины */
+.noticeInline {
+  position: static;
+  width: 100%;
+  margin-top: 0.5rem;
+}
+.noticeText {
+  min-width: 0;
+  flex: 1;
+  padding-top: 0.15rem;
+  overflow-wrap: anywhere;
+}
+.noticeClose {
+  flex: none;
+  display: inline-flex;
+  height: 2rem;
+  width: 2rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  color: inherit;
+}
+.noticeClose:hover {
+  background: rgb(255 255 255 / 0.1);
+}
+
+/* ================================================================ панель управления */
+
+.controls {
+  margin-top: 0.875rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.625rem;
+}
+.iconBtn {
+  display: inline-flex;
+  height: var(--ks-control-h, 40px);
+  width: var(--ks-control-h, 40px);
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--ks-radius-md, 12px);
+  color: rgb(var(--ks-text-3, 100 116 139));
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.iconBtn:hover:not(:disabled) {
+  background: rgb(var(--ks-surface-2, 245 247 251));
+  color: rgb(var(--ks-text, 15 23 42));
+}
+.iconBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.time {
+  margin-left: 0.25rem;
+  font-family: var(--ks-font-mono, ui-monospace, SFMono-Regular, Consolas, Menlo, monospace);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: rgb(var(--ks-text, 15 23 42));
+}
+.timeTotal {
+  color: rgb(var(--ks-text-3, 100 116 139));
+}
+.hint {
+  font-size: 11px;
+  color: rgb(var(--ks-text-3, 100 116 139));
+}
+/* без видео время — отмеченный момент на шкале, не позиция воспроизведения */
+.timeNote {
+  border-radius: var(--ks-radius-pill, 999px);
+  padding: 0.15rem 0.55rem;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  background: var(--ks-warning-soft, rgb(255 251 235));
+  color: rgb(var(--ks-warning-text, 146 64 14));
+  box-shadow: inset 0 0 0 1px var(--ks-warning-border, rgb(253 230 138));
+}
+.speeds {
+  display: inline-flex;
+  overflow: hidden;
+  border-radius: var(--ks-radius-md, 12px);
+  box-shadow: inset 0 0 0 1px var(--ks-border-strong, rgb(203 213 225));
+}
+.speed {
+  min-width: 2.75rem;
+  height: var(--ks-control-h-sm, 32px);
+  padding: 0 0.6rem;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--ks-text-2, 71 85 105));
+}
+.speed:hover:not(:disabled) {
+  background: rgb(var(--ks-surface-2, 245 247 251));
+}
+.speed:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.speedOn,
+.speedOn:hover:not(:disabled) {
+  background: rgb(var(--ks-accent, 29 39 64));
+  color: rgb(var(--ks-accent-contrast, 255 255 255));
+}
+
+/* ================================================================ кадры-доказательства */
+
+/* изображение не загрузилось: явная плашка с причиной; соседний кадр или заглушка не подставляются */
+.imgError {
+  container-type: inline-size;
+  display: flex;
+  aspect-ratio: 3 / 4;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  /* снизу — место под чип таймкода, который карточка может положить поверх кадра */
+  padding: 0.75rem 0.75rem 1.75rem;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #fecdd3;
+  background:
+    repeating-linear-gradient(135deg, rgb(225 29 72 / 0.14) 0 8px, transparent 8px 16px),
+    #1d2740;
+}
+/* узкая плашка: остаётся заголовок; полное пояснение — в aria-label и в большом просмотре */
+@container (max-width: 115px) {
+  .imgErrorMore {
+    display: none;
+  }
+}
+
+.seq {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(7.25rem, 1fr));
+  gap: 1rem 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+@media (min-width: 640px) {
+  .seq {
+    grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  }
+}
+.seqItem {
+  min-width: 0;
+}
+.seqHead {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+/* номер шага — нейтральный (цвет текста), как нумерованные шаги стартовой сцены */
+.seqNum {
+  display: inline-flex;
+  height: 1.3rem;
+  min-width: 1.3rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  padding: 0 0.3rem;
+  background: rgb(var(--ks-text, 15 23 42));
+  color: rgb(var(--ks-surface, 255 255 255));
+  font-size: 11px;
+  font-weight: 700;
+}
+.seqTime {
+  font-family: var(--ks-font-mono, ui-monospace, SFMono-Regular, Consolas, Menlo, monospace);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--ks-text, 15 23 42));
+}
+.seqBtn {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  border-radius: var(--ks-radius-md, 12px);
+  background: #0a0f1d;
+  box-shadow: 0 0 0 1px var(--ks-border, rgb(226 232 240));
+  text-align: left;
+}
+/* кадр в момент эпизода — рамка цвета события */
+.seqBtnPeak {
+  box-shadow: 0 0 0 2px rgb(var(--ks-event, 225 29 72));
+}
+.thumbImg {
+  display: block;
+  width: 100%;
+  height: auto;
+  transition: transform 0.3s ease;
+}
+.seqBtn:hover .thumbImg {
+  transform: scale(1.02);
+}
+.peakTag {
+  margin-top: 0.4rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: rgb(var(--ks-event-text, 190 18 60));
+}
+.peakTag::before {
+  content: "";
+  height: 0.4rem;
+  width: 0.4rem;
+  flex: none;
+  border-radius: 9999px;
+  background: rgb(var(--ks-event, 225 29 72));
+}
+.seqMissing {
+  display: flex;
+  aspect-ratio: 3 / 4;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: var(--ks-radius-md, 12px);
+  border: 1px dashed var(--ks-border-strong, rgb(203 213 225));
+  padding: 0.6rem;
+  text-align: center;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: rgb(var(--ks-text-2, 71 85 105));
+}
+.seqMissingBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: var(--ks-control-h-sm, 32px);
+  border-radius: var(--ks-radius-sm, 8px);
+  padding: 0.25rem 0.55rem;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: rgb(var(--ks-surface-2, 245 247 251));
+  color: rgb(var(--ks-text, 15 23 42));
+  box-shadow: inset 0 0 0 1px var(--ks-border, rgb(226 232 240));
+}
+.seqMissingBtn:hover {
+  background: rgb(var(--ks-surface-3, 233 237 245));
+}
+
+/* «до / после» */
+.ba {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.5rem;
+}
+.baFig {
+  min-width: 0;
+  margin: 0;
+}
+.baSlot {
+  overflow: hidden;
+  border-radius: var(--ks-radius-md, 12px);
+  background: #0a0f1d;
+  box-shadow: 0 0 0 1px var(--ks-border, rgb(226 232 240));
+}
+.baSlotBtn {
+  display: block;
+  width: 100%;
+}
+/* кадр из видео в браузере — не кадр сервера: янтарная пунктирная рамка, отличается с первого взгляда */
+.baCaptured {
+  position: relative;
+  box-shadow: none;
+}
+/* рамка поверх кадра (outline перекрывался бы позиционированным изображением) */
+.baCaptured::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border: 2px dashed rgb(var(--ks-warning, 217 119 6));
+  border-radius: inherit;
+  pointer-events: none;
+}
+.baEmpty {
+  display: flex;
+  aspect-ratio: 3 / 4;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  text-align: center;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #cfd7e6;
+}
+.baArrow {
+  margin-top: 40%;
+  color: rgb(var(--ks-text-3, 100 116 139));
+}
+.baCaption {
+  margin-top: 0.35rem;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: rgb(var(--ks-text-3, 100 116 139));
+  font-variant-numeric: tabular-nums;
+}
+.baCaption b {
+  color: rgb(var(--ks-text, 15 23 42));
+}
+.baWarn {
+  display: block;
+  color: rgb(var(--ks-warning-text, 146 64 14));
+}
+
+/* ================================================================ лайтбокс (всегда тёмный) */
+
+.lb {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  /* непрозрачный спокойный фон: страница под просмотром не просвечивает */
+  background:
+    radial-gradient(90% 60% at 50% 0%, rgb(63 79 116 / 0.26), transparent 70%),
+    #0a0f1d;
+  color: #fff;
+  animation: u06-fade-plain 0.2s ease-out backwards;
+}
+.lb:focus,
+.lb:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.lbTop {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.75rem 0.75rem 0.65rem 1rem;
+  border-bottom: 1px solid rgb(255 255 255 / 0.08);
+}
+.lbTitleBox {
+  min-width: 0;
+  flex: 1;
+  max-height: 30vh;
+  overflow-y: auto;
+  padding-top: 0.15rem;
+}
+.lbTitle {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere; /* длинная подпись переносится, а не обрезается */
+}
+.lbMeta {
+  margin-top: 0.2rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+  font-size: 12px;
+  line-height: 1.4;
+  color: rgb(255 255 255 / 0.72);
+  font-variant-numeric: tabular-nums;
+}
+.lbDemo {
+  border-radius: 0.375rem;
+  padding: 0.1rem 0.4rem;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: #fbbf24;
+  color: #451a03;
+}
+.lbKeys {
+  color: rgb(255 255 255 / 0.5);
+}
+@media (max-width: 639px) {
+  .lbKeys {
+    display: none;
+  }
+}
+.lbBtn {
+  display: inline-flex;
+  height: 2.75rem;
+  width: 2.75rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: rgb(255 255 255 / 0.1);
+  color: #fff;
+  transition: background-color 0.15s ease;
+}
+.lbBtn:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.2);
+}
+.lbBtn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+/* фокус клавиатуры — контур с отступом (цвет фокуса тёмной темы U01, ink-300);
+   выбранный кадр — плотная белая рамка без отступа, так что их не спутать */
+.lbBtn:focus-visible,
+.lbAction:focus-visible,
+.lbThumb:focus-visible {
+  outline: 2px solid #a8b5cf;
+  outline-offset: 3px;
+  box-shadow: none;
+}
+.lbThumbOn:focus-visible {
+  box-shadow: 0 0 0 2px #fff;
+}
+.lbView {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  touch-action: none;
+}
+.lbZoom {
+  transition: transform 75ms linear;
+}
+.lbImgError {
+  width: min(80vw, 22rem);
+  aspect-ratio: 3 / 4;
+  max-height: 60vh;
+  border-radius: var(--ks-radius-md, 12px);
+  font-size: 14px;
+}
+.lbBottom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem 1rem;
+  padding: 0.6rem 0.75rem calc(0.6rem + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid rgb(255 255 255 / 0.08);
+}
+.lbGroup {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.4rem;
+}
+.lbStrip {
+  display: flex;
+  min-width: 0;
+  gap: 0.4rem;
+  overflow-x: auto;
+  padding: 0.35rem;
+  scrollbar-width: thin;
+}
+.lbThumb {
+  position: relative;
+  display: flex;
+  height: 2.75rem;
+  width: 2.25rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 0.45rem;
+  background: #1d2740;
+  opacity: 0.55;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.18);
+  transition: opacity 0.15s ease;
+}
+.lbThumb img {
+  display: block;
+  height: 100%;
+  width: 100%;
+  object-fit: cover; /* только навигационная миниатюра; сам кадр показывается целиком */
+}
+.lbThumb:hover {
+  opacity: 0.9;
+}
+.lbThumbOn,
+.lbThumbOn:hover {
+  opacity: 1;
+  box-shadow: 0 0 0 2px #fff;
+}
+.lbThumbErr {
+  color: #fda4af;
+}
+.lbZoomValue {
+  width: 3.25rem;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.lbAction {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: var(--ks-radius-md, 12px);
+  padding: 0.5rem 1rem;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: #fff;
+  color: #121a2e;
+  transition: background-color 0.15s ease;
+}
+.lbAction:hover {
+  background: #e9edf5;
+}
+
+/* ================================================================ движение */
+
+@keyframes u06-fade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* без transform: оверлей с position: fixed не должен становиться опорным блоком для потомков */
+@keyframes u06-fade-plain {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .episodeChip,
+  .notice,
+  .lb {
+    animation: none;
+  }
+  .lbZoom,
+  .thumbImg,
+  .iconBtn,
+  .lbBtn,
+  .lbThumb,
+  .lbAction {
+    transition: none;
+  }
+  .seqBtn:hover .thumbImg {
+    transform: none;
+  }
+}
+
+/* оверлей наблюдений правил: ровно поверх видимой области кадра, клики проходят к видео */
+.overlayLayer {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+}

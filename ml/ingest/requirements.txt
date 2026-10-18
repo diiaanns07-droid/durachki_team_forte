@@ -1,0 +1,11 @@
+# ml/ingest (A04). Проверено: Python 3.11.17 с версиями lock L1 (tools/dataprep/requirements-l1.lock.txt):
+# av 18.1.0, opencv-python-headless 4.14.0.94, numpy 2.4.6, PyYAML 6.0.3, pytest 9.1.1 (фаза 1 — ещё и на opencv 5.0.0.93)
+av>=13.0            # BSD-3-Clause; колёса включают FFmpeg под LGPL-2.1 (коммерческое использование допустимо)
+opencv-python-headless>=4.9,<5   # Apache-2.0 (фолбэк-декодер, JPEG, метрики, аугментации); lock L1: <5
+numpy>=1.26         # BSD-3-Clause
+PyYAML>=6.0         # MIT
+# опционально: psutil (BSD-3) — peak RSS в bench на Windows
+# dev / тесты
+pytest>=7.4         # MIT
+# внешние бинарники (опционально): ffprobe/ffmpeg в PATH или $SENTINEL_FFPROBE/$SENTINEL_FFMPEG.
+# Без них probe идёт через PyAV/OpenCV, augment — через python-движок; часть тестов skip.

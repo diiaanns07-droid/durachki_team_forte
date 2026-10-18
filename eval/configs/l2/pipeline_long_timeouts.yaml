@@ -1,0 +1,10 @@
+timeouts:
+  min_s: 300.0
+  hard_factor: 8.0
+executor:
+  load_clip_timeout_s: 180
+budgets_s:
+  vlm_verify: 300
+  vlm_discover: 500
+warmup:
+  vlm: true

@@ -1,0 +1,58 @@
+# Kassa Sentinel — конфиг развёртывания (A17). Другой файл: env SENTINEL_DEPLOY_CONFIG=<path>.
+# Правило: новый режим по умолчанию ВЫКЛЮЧЕН, пока L2 не измерил выигрыш на реальных данных.
+version: 1
+
+env:
+  python: "3.11"
+  lock: tools/dataprep/requirements-l1.lock.txt   # lock L1 — источник истины; версии вслепую не меняем
+  torch_backend: cu128                             # torch 2.11.0+cu128 из lock L1
+  # несовпадение этих пакетов с lock блокирует readiness; остальные — предупреждение
+  critical: [torch, torchvision, transformers, bitsandbytes, accelerate, opencv-python-headless,
+             numpy, huggingface-hub, safetensors, tokenizers, qwen-vl-utils, av]
+  # нужны рантайму, но в lock L1 их нет → ставятся только поверх lock с -c lock (pinned не меняются)
+  runtime_extra: [fastapi, uvicorn, python-multipart, starlette]
+
+paths:                     # относительно корня репо (или абсолютные)
+  weights: weights
+  hf_hub_cache: weights/hf/hub
+  data: data
+  cache: cache
+  logs: runs/deploy        # runs/ в .gitignore; отчёты/логи deploy не попадут в git
+
+models:
+  # Блокируют readiness. Список сверен с конфигами модулей (ml/detect closed_set, ml/temporal, ml/vlm preset qwen3vl4b).
+  required:
+    - {repo: PekingU/rtdetr_v2_r18vd, module: ml/detect}
+    - {repo: google/siglip2-base-patch16-224, module: ml/temporal}
+    - {repo: Qwen/Qwen3-VL-4B-Instruct, module: ml/vlm, unless_env: [SENTINEL_NO_VLM=1, SENTINEL_VLM_POLICY=off, SENTINEL_VLM_BACKEND=off]}
+  optional:                # проверяются и попадают в lock, но не блокируют
+    - {repo: google/owlv2-base-patch16-ensemble, module: ml/detect}     # open_vocab.enabled: false по умолчанию
+    - {repo: ustc-community/dfine-medium-obj2coco, module: ml/detect}   # скачан L2, в конфиге detect не используется
+    - {repo: intfloat/multilingual-e5-small, module: copilot}           # copilot выключен по умолчанию
+  exclude_patterns: ["*GGUF*", "*gguf*"]   # неполный GGUF Qwen3-VL не использовать
+
+preflight:
+  min_free_disk_gb: 10
+  min_free_vram_gb: 5.0     # L2: свободно ~5.3 ГБ при пике Qwen3-VL-4B (nf4+bf16) 4.7 ГБ на 6 кадрах
+  hash_weights: false       # true — полный sha256 всех файлов (долго); false — размер+полнота снапшота
+  configs:                  # должны существовать и парситься
+    - backend/api/config.yaml
+    - backend/pipeline/config.yaml
+    - ml/detect/config.yaml
+    - ml/vlm/config.yaml
+  forbid_env: {SENTINEL_FAKE_PIPELINE: "1", SENTINEL_MOCK: "1"}   # в проде — блок
+
+service:
+  host: 127.0.0.1           # снаружи — только через туннель
+  port: 8000
+  app: backend.api.main:app
+  ready_timeout_s: 900      # /readyz (warmup A02) + пробная задача — UNMEASURED на GPU L2
+  trial_job_limit_s: 300    # UNMEASURED
+  budgets_measured_on_gpu: false   # L2: true после замера (README «Последовательность L2»), иначе preflight warn
+  max_restarts: 5           # больше за restart_window_s → супервизор останавливается (не крутит crash-loop)
+  restart_window_s: 600
+  netguard: log             # log | block | off. В проде — аудит; block включается только в offline smoke
+
+tunnel:
+  mode: quick               # quick | named | off
+  protocol: ""              # "" = auto; http2 — если площадка режет UDP/QUIC

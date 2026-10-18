@@ -1,0 +1,78 @@
+# ml/ingest — все пороги и параметры модуля (тюнятся на реальных данных).
+# Переопределить файл целиком: env SENTINEL_INGEST_CONFIG=/path/to/ingest.yaml
+# Отсутствующие ключи берутся из встроенных значений по умолчанию (ml/ingest/config.py).
+
+sampling:
+  default_fps: 5.0         # = default контракта load_video(sample_fps=5.0); пайплайн/CLI берут отсюда
+  max_samples: 6000        # предохранитель RAM: при превышении sample_fps снижается (с warning)
+
+decode:
+  backend: auto            # auto | pyav | opencv  (auto: PyAV, при ошибке — OpenCV)
+  threads: 0               # потоки декодера, 0 = авто
+  skip_nonref: false       # true: декодировать только опорные кадры (I/P) — быстрее, сэмплы чуть неравномернее
+  adaptive_skip: true      # авто-включение skip_nonref, если прогноз декода > budget_s
+  budget_s: 20.0           # бюджет на декодирование одного ролика (для adaptive_skip)
+  max_decode_errors: 200   # битых пакетов до отказа от бэкенда
+  min_coverage: 0.5        # декодировано < 50% заявленной длительности -> DecodeError (неполный файл)
+  warn_coverage: 0.98      # < 98% -> clip.meta["complete"] = False + warning
+
+storage:
+  mode: jpeg               # jpeg (RAM, сверх max_ram_mb — temp-файл) | raw (без сжатия, тоже под max_ram_mb) | disk
+  jpeg_quality: 92
+  max_side: 1280           # сэмплы ужимаются по длинной стороне (0 = без ужатия); frame_at — всегда полный размер
+  max_ram_mb: 512          # JPEG-байты сэмплов сверх лимита уходят во временный файл на диске
+  lru_size: 96             # сколько декодированных сэмплов держать в LRU
+  lru_max_mb: 256          # ...и не больше стольких МБ
+  copy_on_access: true     # frame(i) возвращает копию (кэш нельзя испортить рисованием поверх)
+  encode_workers: 4        # потоки JPEG-кодирования/метрик при загрузке
+
+frame_at:
+  cache_size: 32           # LRU точных кадров (доказательства)
+  cache_mb: 128
+  forward_window_s: 1.5    # следующий t в пределах окна — декодируем вперёд без seek
+  max_offset_s: 0.25       # |PTS кадра − запрошенное t| больше — FrameRef.in_gap (strict: FrameGapError)
+  gap_factor: 3.0          # пробел покрытия: соседние PTS дальше, чем gap_factor * медианный шаг ...
+  min_gap_s: 0.25          # ... и не меньше min_gap_s
+
+mock:
+  allow_synthetic_uri: false  # load_video("synthetic://N") только в тестах/демо (или env SENTINEL_MOCK=1)
+
+quality:
+  analysis_short_side: 160 # короткая сторона серого кадра для метрик (портрет/ландшафт в одной шкале)
+  blur_ksize: 5            # гаусс перед разностью кадров (подавляет шум/JPEG)
+  diff_threshold: 18       # |Δяркости| (0..255), с которого пиксель считается «изменившимся»
+  motion_norm: 0.06        # доля изменившихся пикселей, соответствующая motion_energy = 1.0
+  dark_level: 16           # пиксель «тёмный», если яркость <= dark_level
+  bright_level: 245        # пиксель «засвеченный», если яркость >= bright_level
+  blurry_laplacian: 40.0   # var(Laplacian) ниже — кадр считаем размытым (на analysis_short_side)
+  dark_mean: 0.15          # средняя яркость ниже — кадр тёмный
+  bright_mean: 0.88        # средняя яркость выше — кадр пересвечен
+  frozen_motion: 0.0005    # motion_frac ниже — кадр «заморожен» (дубликат)
+
+activity:
+  smooth_s: 0.6            # окно сглаживания кривой движения
+  threshold: 0.12          # motion_energy выше — «активный» участок
+  pad_s: 1.0               # расширение активных сегментов
+  min_gap_s: 1.0           # сегменты ближе — склеиваются
+  idle_every_n: 5          # gating: в спокойных участках брать каждый N-й сэмпл
+  active_every_n: 1        # gating: в активных — каждый
+
+probe:
+  min_duration_s: 1.0
+  max_duration_s: 900.0
+  ffprobe_timeout_s: 20.0
+
+coarse_fine:               # адаптер для A03 (ml/ingest/coarse_fine.py); гипотеза — включать после замера L2
+  enabled: false
+  coarse_step_s: 1.0       # шаг равномерного обзора всей длительности (по сохранённым сэмплам)
+  coarse_frames: 0         # >0: ровно столько кадров обзора (перекрывает coarse_step_s)
+  dense_fps: 5.0           # плотность точного чтения окна
+  max_frames_per_window: 24
+  max_windows: 6           # окна с наибольшим score
+  window_pad_s: 1.5        # расширение окна кандидата
+  merge_gap_s: 1.0         # окна ближе — склеиваются (дребезг одного события)
+  min_window_s: 1.0
+  budget_frames: 0         # >0: общий бюджет кадров (обзор + окна)
+  coarse_share: 0.4        # доля бюджета на обзор
+  activity_top_k: 3        # окна из пиков motion_energy, если кандидатов нет (0 — не брать)
+  activity_window_s: 4.0

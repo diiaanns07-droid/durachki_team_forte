@@ -1,0 +1,175 @@
+# Kassa Sentinel — конфиг оркестратора (A03, backend/pipeline).
+# Любой ключ можно переопределить: (1) файлом через SENTINEL_PIPELINE_CONFIG=path.yaml
+# (глубокое слияние поверх этого), (2) env-переменными (см. README), (3) флагами CLI.
+
+pipeline_version: "1.0.0"
+
+mock: false                  # true ⇔ SENTINEL_MOCK=1: модули используют mock-бэкенды без весов
+mock_missing_modules: true   # только в mock-режиме: отсутствующий модуль заменяется встроенным фейком
+
+# Стадии по порядку (feature flags). ingest и fusion выключить нельзя.
+# Минимальный сквозной путь: ingest → detect → track → scene → rules → fusion.
+stages:
+  ingest: true
+  detect: true
+  track: true
+  pose: true
+  scene: true
+  rules: true
+  seqrules: false            # правила по последовательностям (профиль pose_rules: eval/configs/l2/pose_rules.yaml)
+  temporal: true
+  vlm_verify: true
+  vlm_discover: true
+  fusion: true
+
+# Обязательные стадии = «заявленный базовый анализ». Их сбой/таймаут/пропуск/отсутствие модуля
+# НИКОГДА не превращается в успешный no_violation: результат либо failed, либо (если другие
+# источники нашли нарушение) done/violation с meta.degraded=true. Дополнительные стадии можно
+# выключать/пропускать — с явным warning в meta.warnings.
+required_stages: [ingest, detect, track, scene, rules, fusion]
+on_required_failure: violation_only   # violation_only | fail  (fail — всегда status=failed)
+
+detect_every_n: 1            # аргумент every_n для ml.detect.detect
+
+# H1 (по умолчанию ВЫКЛ до замера L2): coarse→fine. Обзор всей длительности с overview_fps →
+# кандидаты → окна [t_start − pre_s, t_end + post_s] с плотной выборкой fps → detect/track/scene/rules
+# на окне → уточнённое начало события. Кандидаты не отбрасываются; окна не зависят от движения/риска.
+refine:
+  enabled: false
+  overview_fps: 2.0
+  fps: 8.0
+  pre_s: 4.0
+  post_s: 3.0
+  merge_gap_s: 2.0
+  max_windows: 4
+  max_frames: 96
+  reuse_overview_zones: true
+
+# H2 (по умолчанию как отдал модуль): какой момент события отдавать как timecode_sec.
+# module — t_peak модуля; onset — начало нарушения (t_start); onset_offset — t_start + offset_s.
+timecode:
+  policy: module
+  offset_s: 0.0
+
+executor:
+  mode: process              # process (прод: один процесс-воркер владеет GPU, kill по таймауту)
+                             # | inline (тесты/отладка: в текущем процессе, таймаут не останавливает CUDA)
+  allow_fallback_ingest: true  # ml.ingest недоступен/упал → встроенный декодер OpenCV (с warning)
+  lease_timeout_s: null      # сколько ждать занятый воркер (null → до дедлайна задачи)
+  load_clip_timeout_s: 60
+  restart_on_vram_shortage: true  # после unload() VRAM не хватает → перезапуск воркера перед стадией
+  unload_before:             # перед стадией выгрузить модели этих модулей (хуки unload())
+    vlm_verify: [ml.detect, ml.pose, ml.temporal]
+    vlm_discover: [ml.detect, ml.pose, ml.temporal]
+    detect: [ml.vlm]
+    pose: [ml.vlm]
+    temporal: [ml.vlm]
+  extra_sys_path: []
+
+sampling:
+  base_fps: 5.0              # частота сэмплирования по умолчанию
+  min_fps: 2.0               # ниже не опускаемся даже для очень длинных видео
+  fps_step: 0.5              # fps округляется вниз к сетке → стабильные ключи кэша
+  max_frames_gpu: 900        # потолок числа сэмплированных кадров на GPU (145 с × 5 fps = 725)
+  max_frames_cpu: 300        # на CPU всё в ~10 раз медленнее → меньше кадров
+  reference_deadline_s: 240  # если дедлайн жёстче — fps снижается пропорционально
+  min_deadline_scale: 0.4
+
+# Мягкие бюджеты стадий (сек) для эталонного видео: 145 с при 5 fps (цель ≤ 60 с на RTX 4060).
+# ВНИМАНИЕ: ПЛЕЙСХОЛДЕРЫ, НЕ ИЗМЕРЕНИЯ. Заменить выходом замера L2:
+#   python -m backend.pipeline compare … --emit-budgets budgets.l2.yaml  →  SENTINEL_PIPELINE_CONFIG=budgets.l2.yaml
+# (p90 сек/кадр по стадии × reference_frames × 1.5; время включает загрузку моделей — см. meta.stages.*.cold,
+# очередь — meta.queue_wait_s, токены VLM — meta.vlm.*.budget). Масштабируются по числу кадров;
+# решают только «запускать ли необязательную стадию»; жёсткий предел — дедлайн задачи.
+budgets_s:
+  ingest: 6
+  detect: 14
+  track: 3
+  pose: 10
+  scene: 3
+  rules: 1
+  seqrules: 3
+  temporal: 15
+  refine: 10
+  vlm_verify: 25
+  vlm_discover: 20
+  fusion: 4
+reference_frames: 725
+
+timeouts:
+  hard_factor: 4.0           # жёсткий таймаут стадии = max(бюджет × hard_factor, min_s) ...
+  min_s: 20.0                # ... (min_s покрывает холодную загрузку весов) ...
+  cpu_factor: 4.0            # ... ×cpu_factor на CPU; и никогда не больше остатка до дедлайна
+
+reserve_s:
+  fusion: 12                 # резерв на финальное слияние для ДОПОЛНИТЕЛЬНЫХ стадий
+  fusion_min: 3              # обязательные стадии оставляют слиянию только минимум
+  vlm_min_budget: 6          # если на VLM остаётся меньше — стадия пропускается
+  essential_min: 1.5         # обязательная стадия стартует, только если осталось больше
+  respawn_s: 8               # воркер убит и до дедлайна меньше — слияние без его перезапуска (в процессе API)
+
+optional_stages: [pose, temporal, refine, vlm_verify, vlm_discover]  # пропускаются по бюджету (с warning)
+min_start_fraction: 0.6      # необязательная стадия стартует, если влезает ≥ 60% её (масштабированного) бюджета
+
+# Полнота: meta.coverage — формат contracts.extensions.compute_coverage (A01): ratio ядра (пересечение
+# кадров ingest и состояний scene), unknown_spans, stages, required, complete; + by_stage — доли по
+# стадиям (неизвестно → null). Гейт: ratio < min_required → анализ неполный → никогда не no_violation.
+coverage:
+  gate: true
+  min_required: 0.98           # = contracts/config.yaml coverage.min_ratio_for_no_violation (A01); подбирает L2
+  max_gap_s: 2.0               # разрыв между кадрами/состояниями больше этого — непокрытое время
+  container_tolerance: 0.15    # контейнер длиннее декодированного на >15% → декодер не дошёл до конца
+
+partial:
+  enabled: true
+  milestones: [after_core, after_vlm_verify]  # когда писать data/jobs/<id>/partial.json
+  margin_s: 25               # при остатке < margin_s промежуточный результат пишется перед каждой стадией
+  # partial.json всегда status=processing, meta.partial=true, meta.complete=false;
+  # verdict только "violation" (если уже найдено) или null — НИКОГДА no_violation.
+
+cache:
+  mode: read_write           # off | read_write | from_cache (последний: CV из кэша, rules+fusion заново)
+  normalize_outputs: true    # выход стадии всегда проходит JSON-roundtrip → кэш и «живой» прогон идентичны
+  # Ключ записи стадии = sha256 видео + sample_fps + идентичность ingest (препроцессинг) +
+  # идентичность модуля (версия, хэш кода/конфигов/промптов, model_info(): checkpoint/revision,
+  # fold/split; env SENTINEL_FOLD/SENTINEL_SPLIT) + хэш конфига стадии + ключи входных стадий
+  # + хэш каталога норм (rules/fusion) + mock-флаг.
+
+gpu:
+  device: auto               # auto | cuda | cpu   (env SENTINEL_DEVICE)
+  vram_total_gb: 8.0
+  vram_reserve_gb: 0.7       # CUDA-контекст, фрагментация, активации
+  vlm_policy: auto           # auto | keep | on_demand | off   (env SENTINEL_VLM_POLICY)
+  vram_gb:                   # оценки резидентной памяти моделей, ГБ
+    detect: 1.0
+    pose: 0.5
+    temporal: 1.0
+    vlm_verify: 5.0
+    vlm_discover: 5.0
+
+gpu_stages: [detect, pose, temporal, vlm_verify, vlm_discover]
+
+frames:
+  cache_mb: 512              # кэш декодированных кадров в воркере (заполняется до лимита, без вытеснения)
+
+paths:
+  ascii_safe: auto           # auto (только Windows) | always | never: кириллица в пути → ASCII-хардлинк
+
+fallback_fusion:
+  event_threshold: 0.5       # минимальная уверенность события для нарушения
+  merge_window_s: 8.0        # события одного типа ближе этого окна сливаются
+  risk_threshold: 0.75       # только риск-кривая (без событий): пик выше порога → V99
+  max_violations: 5
+  evidence_max_side: 640
+  evidence_jpeg_quality: 82
+  blur_heads: true           # размытие верхней части бокса человека на кадрах-доказательствах
+
+warmup:
+  # Готовность = успешный warmup(): аренда воркера, хуки warmup() модулей обязательных стадий, синтетический
+  # прогон (done + complete + без degraded + обязательные стадии ok из настоящих модулей) — всё в пределах
+  # общего дедлайна deadline_s, включая RPC. Иначе WarmupError → A02 warmup_failed (не ready).
+  synthetic_seconds: 2.0
+  deadline_s: 120
+  vlm: false                 # прогревать ли VLM (≈5 ГБ VRAM) при старте сервера; false → VLM в отчёте «not_exercised»
+  optional_policy: warn      # сбой ДОПОЛНИТЕЛЬНОЙ стадии при прогреве: warn (готов, деградации в отчёте) | fail
+  allow_fallbacks: false     # запасной декодер/слияние у обязательной стадии при прогреве = провал (кроме mock-режима)

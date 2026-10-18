@@ -1,0 +1,7 @@
+# ml/track (A06). На машине L2 ставить с constraints из lock L1 (tools/dataprep/requirements-l1.lock.txt), версии не менять.
+# Облачная проверка: numpy 2.5.3, scipy 1.18.1, opencv-python-headless 5.0.0.93, PyYAML 6.0.1, Python 3.13 (код совместим с 3.11).
+numpy>=1.24,<3                      # BSD-3 — обязательно
+scipy>=1.10                         # BSD-3 — венгерский алгоритм; без него жадный fallback
+opencv-python-headless>=4.8,<5      # Apache-2.0 (lock L1: opencv < 5) — гистограммы одежды и viz; без него склейка только по положению
+PyYAML>=6.0                         # MIT — config.yaml; без него действуют DEFAULTS из config.py
+pytest>=7                           # MIT — только тесты

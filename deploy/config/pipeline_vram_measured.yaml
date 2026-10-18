@@ -1,0 +1,11 @@
+# ГИПОТЕЗА (по умолчанию ВЫКЛЮЧЕНА). Оверлей к backend/pipeline/config.yaml (A03, глубокое слияние):
+#   SENTINEL_PIPELINE_CONFIG=deploy/config/pipeline_vram_measured.yaml
+# Зачем: оценка A03 vram_gb.vlm_* = 5.0 + vram_reserve_gb 0.7 = 5.7 ГБ, а у L2 свободно ~5.3 ГБ при
+# ИЗМЕРЕННОМ пике Qwen3-VL-4B (nf4 + bf16) 4.7 ГБ на 6 кадрах → prepare_vram может посчитать, что памяти
+# не хватает, и пропустить VLM. Включать ТОЛЬКО если замер (deploy/VRAM.md, «Команда замера») покажет
+# в meta.vram_events / meta.warnings пропуск VLM из-за нехватки VRAM при дефолтах A03.
+gpu:
+  vram_reserve_gb: 0.5
+  vram_gb:
+    vlm_verify: 4.7     # измерено L2: пик на 6 кадрах
+    vlm_discover: 4.7

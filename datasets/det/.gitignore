@@ -1,0 +1,10 @@
+# Локальное окружение разметки — не в git (кадры лежат в data/frames/, он вне репо по .gitignore A01)
+.venv-ls/
+.venv-owl/
+.ls-data/
+__pycache__/
+.pytest_cache/
+# кадры/картинки сюда класть нельзя (guard_media), но на всякий случай
+*.jpg
+*.jpeg
+*.png

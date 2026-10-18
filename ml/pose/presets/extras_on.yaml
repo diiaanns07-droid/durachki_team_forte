@@ -1,0 +1,6 @@
+# Пресет для замера L2 (SENTINEL_POSE_CONFIG=ml/pose/presets/extras_on.yaml): новые extra позы включены.
+# Влияет на итог пайплайна, только если A08/A09 читают extra["motion"] / extra["placements"].
+signals:
+  extras:
+    motion: true
+    item_placed_on_desk: true

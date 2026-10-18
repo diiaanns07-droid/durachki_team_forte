@@ -1,0 +1,7 @@
+# Пресет для L2 — ВХОД оркестратора A03 (SENTINEL_PIPELINE_CONFIG=ml/pose/presets/a03_pose_off.yaml),
+# а не конфиг ml/pose. Пока A03 не читает ml.pose.status()/model_info(), стадия позы без весов выглядит
+# в meta как "ok" с полным покрытием. С этим пресетом A03 честно пишет stages.pose = disabled
+# (→ completeness "skipped") и warning. Если у L2 уже есть свой SENTINEL_PIPELINE_CONFIG — добавьте туда
+# эти две строки вместо этого файла.
+stages:
+  pose: false

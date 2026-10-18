@@ -1,0 +1,435 @@
+[
+  {
+    "id": "multi_events_debounce",
+    "about": "несколько событий в одном видео; дребезг одного события (5.0 и 6.4 с) объединяется",
+    "clip": {
+      "duration": 40.0,
+      "maker": "coded"
+    },
+    "events": [
+      {
+        "type_id": "V01",
+        "t_start": 4.5,
+        "t_end": 5.5,
+        "t_peak": 5.0,
+        "confidence": 0.8,
+        "source": "rules",
+        "facts": [
+          "второй человек находится за кассовым столом"
+        ]
+      },
+      {
+        "type_id": "V01",
+        "t_start": 6.2,
+        "t_end": 6.8,
+        "t_peak": 6.4,
+        "confidence": 0.7,
+        "source": "rules",
+        "facts": [
+          "второй человек находится за кассовым столом"
+        ]
+      },
+      {
+        "type_id": "V03",
+        "t_start": 29.0,
+        "t_end": 33.0,
+        "t_peak": 30.0,
+        "confidence": 0.75,
+        "source": "rules",
+        "facts": [
+          "дверца сейфа открыта, рядом нет кассира"
+        ]
+      }
+    ],
+    "expect": {
+      "status": "done",
+      "verdict": "violation",
+      "types": [
+        "V01",
+        "V03"
+      ],
+      "timecodes": [
+        5.0,
+        30.0
+      ]
+    }
+  },
+  {
+    "id": "source_conflict_vlm_reject",
+    "about": "конфликт источников: правило видит V01, VLM уверенно отклоняет → скор понижен, подсказка",
+    "clip": {
+      "duration": 20.0,
+      "maker": "coded"
+    },
+    "events": [
+      {
+        "type_id": "V01",
+        "t_start": 9.5,
+        "t_end": 10.5,
+        "t_peak": 10.0,
+        "confidence": 0.7,
+        "source": "rules",
+        "facts": [
+          "второй человек у кассового стола"
+        ]
+      },
+      {
+        "type_id": "V01",
+        "t_start": 9.5,
+        "t_end": 10.5,
+        "t_peak": 10.0,
+        "confidence": 0.1,
+        "source": "vlm",
+        "facts": [],
+        "extra": {
+          "vlm_verdict": "rejected",
+          "vlm_score": 0.9
+        }
+      }
+    ],
+    "expect": {
+      "status": "done",
+      "verdict": "no_violation",
+      "types": [],
+      "hint_reasons": {
+        "V01": [
+          "below_threshold"
+        ]
+      }
+    }
+  },
+  {
+    "id": "source_conflict_types",
+    "about": "одновременно rules V02 и temporal V03: temporal без фактов не создаёт нарушение",
+    "clip": {
+      "duration": 20.0,
+      "maker": "coded"
+    },
+    "events": [
+      {
+        "type_id": "V02",
+        "t_start": 8.0,
+        "t_end": 12.0,
+        "t_peak": 8.4,
+        "confidence": 0.8,
+        "source": "rules",
+        "facts": [
+          "кассир вышел из зоны рабочего места; наличные остаются на столе"
+        ]
+      },
+      {
+        "type_id": "V03",
+        "t_start": 8.0,
+        "t_end": 12.0,
+        "t_peak": 9.0,
+        "confidence": 0.95,
+        "source": "temporal"
+      }
+    ],
+    "expect": {
+      "status": "done",
+      "verdict": "violation",
+      "types": [
+        "V02"
+      ],
+      "timecodes": [
+        8.4
+      ]
+    }
+  },
+  {
+    "id": "unknown_type_and_norm",
+    "about": "неизвестный тип → V99 без нормы — только подсказка; тип без нормы с фактами — нарушение «без пункта»",
+    "clip": {
+      "duration": 30.0,
+      "maker": "coded"
+    },
+    "catalog": "a13_like",
+    "events": [
+      {
+        "type_id": "V42",
+        "t_start": 4.0,
+        "t_end": 6.0,
+        "t_peak": 5.0,
+        "confidence": 0.9,
+        "source": "vlm",
+        "facts": [
+          "человек перелезает через стойку"
+        ],
+        "extra": {
+          "vlm": {
+            "verdict": "confirm",
+            "score": 0.9
+          }
+        }
+      },
+      {
+        "type_id": "V06",
+        "t_start": 19.0,
+        "t_end": 21.0,
+        "t_peak": 20.0,
+        "confidence": 0.7,
+        "source": "rules",
+        "facts": [
+          "рядом с наличными на столе стоит стакан, кассир пьёт из него"
+        ]
+      }
+    ],
+    "expect": {
+      "status": "done",
+      "verdict": "violation",
+      "types": [
+        "V06"
+      ],
+      "rules_empty": true,
+      "hint_reasons": {
+        "V99": [
+          "no_norm"
+        ]
+      }
+    }
+  },
+  {
+    "id": "no_facts",
+    "about": "сильное событие без наблюдаемых фактов — не нарушение; покрытие полное → честный no_violation",
+    "clip": {
+      "duration": 20.0,
+      "maker": "coded"
+    },
+    "events": [
+      {
+        "type_id": "V01",
+        "t_start": 9.0,
+        "t_end": 11.0,
+        "t_peak": 10.0,
+        "confidence": 0.95,
+        "source": "rules",
+        "facts": []
+      }
+    ],
+    "expect": {
+      "status": "done",
+      "verdict": "no_violation",
+      "types": [],
+      "hint_reasons": {
+        "V01": [
+          "no_observable_fact"
+        ]
+      }
+    }
+  },
+  {
+    "id": "edge_pts",
+    "about": "события на самом краю: t=0 и t за пределами длительности → таймкоды в границах, PTS реальных кадров",
+    "clip": {
+      "duration": 10.0,
+      "maker": "coded"
+    },
+    "events": [
+      {
+        "type_id": "V01",
+        "t_start": 0.0,
+        "t_end": 0.5,
+        "t_peak": 0.0,
+        "confidence": 0.8,
+        "source": "rules",
+        "facts": [
+          "второй человек за кассовым столом"
+        ]
+      },
+      {
+        "type_id": "V03",
+        "t_start": 9.5,
+        "t_end": 12.0,
+        "t_peak": 11.0,
+        "confidence": 0.8,
+        "source": "rules",
+        "facts": [
+          "дверца сейфа открыта"
+        ]
+      }
+    ],
+    "expect": {
+      "status": "done",
+      "verdict": "violation",
+      "types": [
+        "V01",
+        "V03"
+      ],
+      "timecodes": [
+        0.0,
+        9.8
+      ],
+      "pts_on_grid": true
+    }
+  },
+  {
+    "id": "empty_frames",
+    "about": "кадры не читаются: нарушение остаётся, кадров нет, есть предупреждение",
+    "clip": {
+      "duration": 20.0,
+      "maker": "none"
+    },
+    "events": [
+      {
+        "type_id": "V01",
+        "t_start": 4.5,
+        "t_end": 5.5,
+        "t_peak": 5.0,
+        "confidence": 0.8,
+        "source": "rules",
+        "facts": [
+          "второй человек за кассовым столом"
+        ]
+      }
+    ],
+    "expect": {
+      "status": "done",
+      "verdict": "violation",
+      "types": [
+        "V01"
+      ],
+      "n_frames": [
+        0
+      ],
+      "warning": "no frame"
+    }
+  },
+  {
+    "id": "duplicate_jpeg",
+    "about": "статичная сцена: одинаковые кадры не дублируются в доказательствах",
+    "clip": {
+      "duration": 20.0,
+      "maker": "static"
+    },
+    "events": [
+      {
+        "type_id": "V03",
+        "t_start": 4.0,
+        "t_end": 9.0,
+        "t_peak": 6.0,
+        "confidence": 0.8,
+        "source": "rules",
+        "facts": [
+          "дверца сейфа открыта"
+        ]
+      }
+    ],
+    "expect": {
+      "status": "done",
+      "verdict": "violation",
+      "types": [
+        "V03"
+      ],
+      "n_frames": [
+        1
+      ]
+    }
+  },
+  {
+    "id": "partial_coverage_clean",
+    "about": "декодирована часть видео и нарушений нет → fusion не выносит вердикт (verdict=null, status=done), ответ жюри — failed, а не скрытый no_violation",
+    "clip": {
+      "duration": 20.0,
+      "maker": "coded",
+      "meta": {
+        "coverage": 0.6,
+        "complete": false
+      }
+    },
+    "events": [],
+    "expect": {
+      "status": "done",
+      "verdict": null,
+      "types": [],
+      "incomplete": true,
+      "jury_status": "failed"
+    }
+  },
+  {
+    "id": "a09_norm_review",
+    "about": "правило A09 вида violation без проверенной нормы (review_observation, conf срезан до 0.45) → нарушение без пункта",
+    "clip": {
+      "duration": 20.0,
+      "maker": "coded"
+    },
+    "catalog": "a13_like",
+    "events": [
+      {
+        "type_id": "V02",
+        "t_start": 8.0,
+        "t_end": 14.0,
+        "t_peak": 8.6,
+        "confidence": 0.45,
+        "source": "rules",
+        "facts": [
+          "кассир вышел из зоны рабочего места; наличные остаются на столе"
+        ],
+        "extra": {
+          "assessment": "review_observation",
+          "assessment_reasons": [
+            "нет проверенной применимой нормы для V02 в каталоге A13 (статус: absent)"
+          ],
+          "trace": {
+            "confidence_terms": {
+              "base": 0.3,
+              "strength": 0.3,
+              "duration": 0.15,
+              "factor": 1.0,
+              "cap": 0.95
+            }
+          }
+        }
+      }
+    ],
+    "expect": {
+      "status": "done",
+      "verdict": "violation",
+      "types": [
+        "V02"
+      ],
+      "timecodes": [
+        8.6
+      ],
+      "rules_empty": true
+    }
+  },
+  {
+    "id": "a09_observation_only",
+    "about": "правило-наблюдение A09 (телефон сам по себе) — подсказка, не нарушение",
+    "clip": {
+      "duration": 20.0,
+      "maker": "coded"
+    },
+    "catalog": "a13_like",
+    "events": [
+      {
+        "type_id": "V05",
+        "t_start": 3.0,
+        "t_end": 6.0,
+        "t_peak": 4.0,
+        "confidence": 0.45,
+        "source": "rules",
+        "facts": [
+          "у кассира в руке мобильный телефон"
+        ],
+        "extra": {
+          "assessment": "review_observation",
+          "assessment_reasons": [
+            "правило-наблюдение: само по себе не доказывает нарушение"
+          ]
+        }
+      }
+    ],
+    "expect": {
+      "status": "done",
+      "verdict": "no_violation",
+      "types": [],
+      "hint_reasons": {
+        "V05": [
+          "observation_only"
+        ]
+      }
+    }
+  }
+]

@@ -1,0 +1,82 @@
+# Режим verify.mode=qa (A11, фаза 2). Нейтральные вопросы под спецификацию поведения команды.
+# Вопросы НЕ сообщают модели, что подозревается нарушение; «Нет» и «Не видно» — нормальные ответы.
+# Сопоставление ответов с кандидатом делает код (ml/vlm/qa.py, функции decide_*), а не модель.
+# Всё здесь — гипотеза для замера L2; правки текста вопросов = новая версия (version).
+version: qa-v1
+
+anchor: t_peak            # момент перехода кандидата (t_peak | t_start); политику выбирает замер L2
+offsets_s:                # кадры относительно anchor
+  before: -2.0
+  at: 0.0
+  after: 2.0
+  after2: 4.0
+
+options:                  # ключ -> варианты написания ответа (первый токен каждого варианта = «голос»)
+  yn: {"yes": ["Да"], "no": ["Нет"], "unknown": ["Не видно"]}
+  count: {"0": ["0"], "1": ["1"], "2": ["2"], "3": ["3"], "unknown": ["Не видно"]}
+
+suffix:
+  yn: "Ответь одним словом: Да, Нет или Не видно."
+  count: "Ответь одной цифрой (0, 1, 2 или 3) или словами «Не видно»."
+
+questions:
+  cashier_present:
+    text: "Кассир находится на своём рабочем месте у кассового стола?"
+    options: yn
+  cash_on_desk:
+    text: "На кассовом столе лежат наличные деньги (купюры или пачки купюр)?"
+    options: yn
+    crop: [desk, cash_tray]
+  bag_on_desk:
+    text: "На кассовом столе лежит инкассаторская сумка?"
+    options: yn
+    crop: [desk]
+  safe_open:
+    text: "Дверца сейфа открыта?"
+    options: yn
+    crop: [safe]
+  phone_in_hand:
+    text: "Кассир держит в руке мобильный телефон (не стационарный телефон на столе)?"
+    options: yn
+  eating_drinking:
+    text: "Кассир ест или пьёт: подносит ко рту еду, чашку, стакан или бутылку?"
+    options: yn
+  personal_items:
+    text: "На кассовом столе лежат личные вещи, не относящиеся к работе (куртка, сумка, пакет)?"
+    options: yn
+    crop: [desk]
+  cashier_side_count:
+    text: "Сколько человек находится на стороне кассира (за кассовым столом и у сейфа)?"
+    options: count
+  client_side_count:
+    text: "Сколько человек находится со стороны клиентов, напротив кассового стола?"
+    options: count
+  door_open:
+    text: "Дверь в кассовое помещение открыта?"
+    options: yn
+    crop: [door]
+  bag_unattended:
+    text: "Инкассаторская сумка лежит, и её никто не держит в руках?"
+    options: yn
+  hands_visible:
+    text: "Руки кассира, работающего с деньгами, видны на кадре?"
+    options: yn
+
+# Что спрашивать для каждого типа кандидата: [вопрос, кадр]. Порядок = порядок вызовов (бюджет режет хвост).
+types:
+  V01: [[cashier_side_count, at], [cashier_side_count, after], [client_side_count, at]]
+  V02: [[cashier_present, before], [cashier_present, after2], [cash_on_desk, after2], [bag_on_desk, after2],
+        [safe_open, after2]]
+  V03: [[safe_open, at], [safe_open, after2], [cashier_present, after2]]
+  V04: [[door_open, at], [safe_open, at], [cash_on_desk, at]]
+  V05: [[phone_in_hand, at], [phone_in_hand, after]]
+  V06: [[eating_drinking, at], [eating_drinking, after]]
+  V07: [[bag_unattended, after], [bag_unattended, after2]]
+  V08: [[hands_visible, at], [hands_visible, after]]
+  V09: [[personal_items, at], [personal_items, after2]]
+  # V99 и неизвестные типы — режим json (свободный вопрос «что видно»), qa для них не определён
+
+decision:
+  answer_threshold: 0.6   # p(ответа) >= — ответ считается данным (для фактов)
+  min_evidence: 0.5       # p_support + p_contra < — «не видно/неизвестно» (uncertain), а не «нет»
+  min_mass: 0.2           # доля вероятности на варианты ниже — ответ модели не в формате, вопрос не учитываем

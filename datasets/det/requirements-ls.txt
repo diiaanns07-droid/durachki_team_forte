@@ -1,0 +1,2 @@
+# venv datasets/det/.venv-ls: только Label Studio Community (Apache-2.0). Отдельно от torch — у него жёсткие пины.
+label-studio>=1.13

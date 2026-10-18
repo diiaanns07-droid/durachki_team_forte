@@ -1,0 +1,9 @@
+# ml.pose для профиля pose_rules (SENTINEL_POSE_CONFIG): RTMPose (замер L2: быстрее MediaPipe в ~5 раз при
+# сопоставимой доступности запястий), все люди в кадре до 4, почти без прореживания по времени.
+backend:
+  order: [rtmpose_onnx]
+selection:
+  max_persons_per_frame: 4
+  max_crops_total: 4000
+  budget_s: 25.0
+  max_stride: 2

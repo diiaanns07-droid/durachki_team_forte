@@ -1,0 +1,110 @@
+# ml.seqrules — правила по последовательностям наблюдений (L2, профиль pose_rules).
+# ВСЕ длительности и пороги ниже — технические параметры распознавания, НЕ требования нормативных актов.
+# Переопределение: env SENTINEL_SEQRULES_CONFIG=path.yaml (глубокое слияние поверх этого файла).
+version: 1
+
+person:
+  staff_roles: [cashier, collector]
+  work_zone: cashier_area         # зона A06 «где работает кассир» (из треков), не физический предмет «касса/сейф»
+  box_time_tolerance_s: 0.12      # поза/предмет относятся к кадру трека, если их PTS ближе (≈ полкадра при 5 fps)
+  zone_min_overlap: 0.25          # доля нижней половины bbox человека внутри зоны → «в зоне»
+
+phone:                            # правило А — мобильный телефон у руки/головы конкретного человека
+  enabled: true
+  type_id: V05
+  labels: [cell_phone]
+  min_score: 0.30                 # score детектора телефона
+  wrist_min: 0.30                 # score запястья (видимость сустава)
+  head_min: 0.30
+  near_hand_rel: 0.25             # центр телефона ≤ доли высоты человека от запястья
+  near_head_rel: 0.22
+  min_duration_s: 1.5
+  max_gap_s: 1.0                  # краткая потеря (absent/unknown) внутри эпизода допускается
+  min_observed_frames: 4
+  carry_move_rel: 0.06            # телефон смещается (≥ доли высоты человека) — его держат, а не лежит рядом
+  head_fraction: 0.3              # или у головы на такой доле наблюдений
+  staff_zone_fraction: 0.5        # человек без роли staff считается на рабочем месте, если столько кадров в зоне
+  confidence: {base: 0.55, per_s: 0.03, max: 0.8, mobile_bonus: 0.05}
+
+safe:                             # правило Б — открытый сейф, в рабочей зоне никого нет
+  enabled: true
+  type_id: V03
+  absent_min_s: 3.0               # подряд обработанных кадров без людей в рабочей зоне
+  max_gap_s: 0.6                  # необработанные кадры внутри отсутствия (их не считаем ни «есть», ни «нет»)
+  exit_window_s: 3.0              # уход подтверждён: последний сотрудник виден вне зоны в этом окне
+  max_seen_after_exit_frac: 0.3   # после выхода виден в кадре дольше этой доли отсутствия → рядом, не «без присмотра»
+  min_open_checks: 2              # подряд «open» без «closed» между ними
+  first_check_after_s: 1.0
+  check_every_s: 2.0
+  confidence: {base: 0.6, per_check: 0.05, max: 0.85}
+
+entry:                            # правило В — вход в рабочую зону (наблюдение, не обвинение)
+  enabled: true
+  type_id: V01
+  dwell_s: 2.0
+  max_gap_s: 0.6
+  confidence: 0.35
+
+storage:                          # правило Б2 — место хранения, найденное по рукам (два прохода; экспериментальное)
+  enabled: false                  # включается профилем pose_rules_storage (eval/configs/l2/seqrules_storage.yaml)
+  type_id: V03
+  reach_ext: 2.0                  # рука вытянута: |запястье − центр плеч| ≥ 2 ширины плеч ...
+  reach_delta: 0.6                # ... и на 0,6 ширины плеч дальше обычного положения рук этого человека (медиана)
+  max_reach_s: 8.0                # дольше — это поза, а не движение к месту
+  wrist_min: 0.30
+  shoulder_min: 0.30
+  min_reach_s: 0.4
+  max_gap_s: 0.6
+  exclude_zones: [desk, client_area]   # работа за столом и передача клиенту — не «место хранения»
+  site_radius_rel: 0.06           # цели вытягиваний ближе (доля высоты кадра) — одно место
+  crop_scale: 3.0                 # сторона вырезки места = 3 ширины плеч
+  max_sites: 3
+  visits_per_site: 2              # проверяются последние касания места
+  baseline_before_s: 1.0          # вид места до касания
+  checks_after_s: [2, 4, 7, 10]   # проверки после ухода руки (пока рука не вернулась)
+  min_open_checks: 2              # подряд «open» без «closed»; без вида «до» — на одну больше
+  revert_dist: 0.25               # 1 − корреляция вырезок «до / после»: меньше — место вернулось к исходному
+  confidence: {base: 0.55, per_check: 0.05, max: 0.8}
+
+hand_cash:                        # «рука — деньги»: только наблюдение; включать, когда детектор денег подтверждён
+  enabled: false
+  labels: [cash]
+  min_score: 0.30
+  near_rel: 0.20
+  max_gap_s: 0.6
+  min_duration_s: 0.6
+
+checks:                           # ограниченные проверки по кадрам (OWLv2 из ml.detect); пропуск ≠ «проверено»
+  enabled: true
+  budget_s: 25.0
+  phone_contrast:                 # «мобильный» против похожих предметов стола на кропе вокруг телефона
+    enabled: true
+    max_checks: 8
+    per_episode: 2
+    phone_queries: ["mobile phone", "smartphone"]
+    not_phone_queries: ["desk telephone", "landline phone", "calculator", "card payment terminal", "computer mouse"]
+    min_score: 0.2
+    margin: 0.05
+    crop_scale: 6.0               # сторона кропа = scale × сторона бокса телефона
+    crop_min_side_rel: 0.25       # не меньше доли короткой стороны кадра
+    match_iou: 0.15
+  safe_state:
+    enabled: true
+    max_checks: 12
+    per_interval: 4
+  site_state:                     # место хранения: «открыто» против «закрыто» на увеличенной вырезке
+    enabled: true
+    max_checks: 24
+    open_queries: ["open safe", "open safe door", "open drawer", "open cabinet door"]
+    closed_queries: ["closed safe", "closed metal safe", "closed drawer", "closed cabinet door"]
+    min_score: 0.2
+    margin: 0.05
+    central: 0.35                 # бокс OWLv2 засчитывается, если его центр в центральной части вырезки
+    crop_min_side_rel: 0.18
+  site_appearance:
+    enabled: true
+    max_checks: 30
+
+merge_gap_s: 2.0                  # повторы одного правила одного человека ближе — одно событие
+max_observation_frames: 2500      # потолок кадров в observations (для UI); лишнее равномерно прореживается
+episode_min_frames_saved: 2       # эпизоды короче — только счётчиком, без кадров

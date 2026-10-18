@@ -1,0 +1,9 @@
+[
+  {
+    "name": "OWLv2 base ensemble (пред-разметка боксов, только офлайн-инструмент разметки)",
+    "hf_id_or_url": "google/owlv2-base-patch16-ensemble",
+    "license": "Apache-2.0",
+    "size": "0.6 GB",
+    "used_in": "datasets/det/prelabel_owlv2.py"
+  }
+]

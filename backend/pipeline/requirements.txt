@@ -1,0 +1,8 @@
+# backend/pipeline (A03) — оркестратор. Тяжёлые зависимости (torch, transformers, onnxruntime)
+# приносят модули ml.*; оркестратор их НЕ импортирует (torch трогает только процесс-воркер).
+pyyaml>=6.0,<7
+numpy>=1.26
+opencv-python-headless>=4.9,<5   # probe, запасной декодер, кадры-доказательства, синтетика для прогрева/тестов
+# опционально: psutil>=5.9 (пиковая RSS в `profile` на Windows)
+# тесты:
+pytest>=8

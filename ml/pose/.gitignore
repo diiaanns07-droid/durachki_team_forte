@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+# веса не коммитим
+*.onnx
+*.pt
+*.safetensors
+*.gguf

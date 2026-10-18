@@ -1,0 +1,41 @@
+# ml/track — пороги трекинга, ролей и авто-зон (A06).
+# Значения по умолчанию продублированы в config.py (DEFAULTS); этот файл их переопределяет.
+# Путь можно подменить: SENTINEL_TRACK_CONFIG=/path/to/track.yaml
+# Все расстояния — в диагоналях бокса (ракурсо-независимо), время — в секундах.
+anchor: center
+tracker:
+  high_thr: 0.45
+  low_thr: 0.10
+  new_track_thr: 0.50
+  match_thr: 0.80
+  low_match_thr: 0.60
+  track_buffer_s: 2.0
+  min_hits: 2
+  fill_gaps_s: 0.0        # не дорисовываем боксы: в Track.boxes только реальные наблюдения
+stitch:
+  enabled: true
+  short_gap_s: 2.5
+  long_gap_s: 180.0
+  app_thr_short: 0.50
+  app_thr_long: 0.32
+  long_requires_appearance: true
+appearance:
+  enabled: false          # H-APP: гистограмма одежды для склейки; цвет одежды — не признак по спецификации
+  samples_per_track: 6
+  max_frames: 150
+  budget_s: 4.0
+roles:
+  early_s: 3.0
+  w_start: 0.0            # роль не зависит от «кто первый»
+  min_presence_s: 1.0
+  min_cashier_score: 0.35
+  fallback_cashier_conf_cap: 0.45
+  collector_thr: 0.5
+  second_person_role: unknown
+zones:
+  desk_labels: [laptop, money_counter]
+  desk_static_labels: [cell_phone, keys, document]
+  desk_expand: 1.3
+  cashier_expand: 1.15
+  fallback_zone_conf_cap: 0.3
+  max_vertices: 12

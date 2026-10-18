@@ -1,0 +1,45 @@
+# Zero-shot подсказки для SigLIP2 (EN — в модель, RU — в facts для человека).
+# Ключи типов — как в norms/catalog.yaml. Подсказки можно править без переизвлечения кадров:
+# эмбеддинги изображений кэшируются, текстовые пересчитываются по хэшу набора подсказок.
+version: 1
+types:
+  V01:
+    - {en: "a stranger standing behind the cashier desk", ru: "посторонний человек стоит за кассовым столом"}
+    - {en: "two people behind a bank teller desk", ru: "два человека за кассовым столом"}
+    - {en: "a customer inside the cash room near the money", ru: "клиент внутри кассового помещения рядом с деньгами"}
+  V02:
+    - {en: "cash left on an empty desk", ru: "наличные оставлены на пустом столе"}
+    - {en: "an empty cashier workplace with money on the table", ru: "пустое рабочее место кассира с деньгами на столе"}
+    - {en: "an empty office chair at a desk with banknotes", ru: "пустой стул у стола с банкнотами"}
+  V03:
+    - {en: "an open metal safe with nobody nearby", ru: "открытый металлический сейф без людей рядом"}
+    - {en: "an open safe door in an office", ru: "открытая дверца сейфа в помещении"}
+    - {en: "a person taking money out of an open safe while another person watches", ru: "человек достаёт деньги из открытого сейфа при другом человеке"}
+  V04:
+    - {en: "an open glass door in a cash office", ru: "открытая стеклянная дверь в кассовом помещении"}
+    - {en: "a person walking through a doorway into an office", ru: "человек входит через дверной проём"}
+  V05:
+    - {en: "a cashier talking on a mobile phone", ru: "кассир разговаривает по мобильному телефону"}
+    - {en: "a person holding a smartphone near the ear", ru: "человек держит смартфон у уха"}
+    - {en: "a person looking at a smartphone in their hands at a desk", ru: "человек смотрит в смартфон в руках за столом"}
+  V06:
+    - {en: "a person eating or drinking at a desk with cash", ru: "человек ест или пьёт за столом с наличными"}
+    - {en: "a person drinking from a cup at an office desk", ru: "человек пьёт из чашки за рабочим столом"}
+    - {en: "food on a desk next to banknotes", ru: "еда на столе рядом с банкнотами"}
+  V07:
+    - {en: "a man handing over a green bag", ru: "мужчина передаёт зелёную сумку"}
+    - {en: "a green cash collection bag left on a desk", ru: "зелёная инкассаторская сумка оставлена на столе"}
+    - {en: "a person opening a green bag full of money", ru: "человек открывает зелёную сумку с деньгами"}
+  V08:
+    - {en: "hands hidden under the desk while holding money", ru: "руки с деньгами скрыты под столом"}
+    - {en: "a person hiding banknotes in their clothes", ru: "человек прячет банкноты в одежду"}
+    - {en: "a person passing money under the table", ru: "передача денег под столом"}
+  V99:
+    - {en: "a person behaving suspiciously in a bank office", ru: "человек ведёт себя подозрительно в кассовом помещении"}
+    - {en: "a person putting money into a pocket", ru: "человек кладёт деньги в карман"}
+normal:
+  - {en: "a cashier sitting at a desk working on a laptop", ru: "кассир сидит за столом и работает на ноутбуке"}
+  - {en: "a cashier counting money with a banknote counter", ru: "кассир пересчитывает деньги на счётчике банкнот"}
+  - {en: "an empty office room with a desk and a closed safe", ru: "пустое помещение со столом и закрытым сейфом"}
+  - {en: "a customer standing at a cashier window", ru: "клиент стоит у окна кассы"}
+  - {en: "a top-down view of an office desk", ru: "вид сверху на рабочий стол"}

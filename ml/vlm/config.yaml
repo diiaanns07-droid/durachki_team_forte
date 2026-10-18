@@ -1,0 +1,193 @@
+# Kassa Sentinel — ml.vlm (A11). Все пороги здесь; тюнятся на реальных данных.
+# Env-переопределения: SENTINEL_MOCK=1 (mock), SENTINEL_VLM_BACKEND, SENTINEL_VLM_PRESET,
+# SENTINEL_VLM_MODEL, SENTINEL_VLM_URL, SENTINEL_VLM_CONFIG (другой yaml), SENTINEL_VLM_LANG.
+version: 1
+
+# off | mock | transformers | llamacpp_server | llamacpp_python | auto
+# ОСНОВНОЙ (доводится до рабочего состояния): transformers — в процессе пайплайна, один GPU-владелец
+# (A03 сериализует GPU через общий lock, см. ml.vlm.set_gpu_lock). llama.cpp-адаптеры — опциональные.
+# auto: пробует auto_order; первый доступный используется. Недоступен -> стадия VLM пропускается (не mock!).
+backend: transformers
+auto_order: [transformers, llamacpp_server]
+preset: qwen3vl4b            # какой пресет брать для transformers/llamacpp (см. presets)
+lang: ru                     # язык промптов: ru | en (факты всегда просим по-русски)
+prompt_version: v1
+
+presets:
+  # (б) Qwen3-VL-4B-Instruct (Apache-2.0), 4-bit bitsandbytes — основной кандидат для RTX 4060 8 ГБ.
+  # Память НЕ измерена (нет GPU в облаке): мерить python -m ml.vlm.bench локально до выбора.
+  qwen3vl4b:
+    transformers: {model: Qwen/Qwen3-VL-4B-Instruct, quant: bnb4, px_per_token: 32}
+    llamacpp: {model_file: Qwen3VL-4B-Instruct-Q4_K_M.gguf, mmproj_file: mmproj-Qwen3VL-4B-Instruct-F16.gguf}
+  # Qwen3-VL-8B-Instruct, 4-bit — ~5.8 ГБ, точнее, но тесно рядом с остальными моделями
+  qwen3vl8b:
+    transformers: {model: Qwen/Qwen3-VL-8B-Instruct, quant: bnb4, px_per_token: 32}
+    llamacpp: {model_file: Qwen3VL-8B-Instruct-Q4_K_M.gguf, mmproj_file: mmproj-Qwen3VL-8B-Instruct-F16.gguf}
+  # (а) Qwen2.5-VL-7B-Instruct-AWQ — ~6.5 ГБ, только «по требованию» (нужен autoawq)
+  qwen25vl7b_awq:
+    transformers: {model: Qwen/Qwen2.5-VL-7B-Instruct-AWQ, quant: awq, px_per_token: 28}
+    llamacpp: {model_file: Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf, mmproj_file: mmproj-Qwen2.5-VL-7B-Instruct-f16.gguf}
+  # Лёгкий запасной: Qwen2.5-VL-3B ЗАПРЕЩЁН (research license) — не добавлять! Qwen3-VL-2B — Apache-2.0.
+  qwen3vl2b:
+    transformers: {model: Qwen/Qwen3-VL-2B-Instruct, quant: none, px_per_token: 32}
+    llamacpp: {model_file: Qwen3VL-2B-Instruct-Q8_0.gguf, mmproj_file: mmproj-Qwen3VL-2B-Instruct-F16.gguf}
+
+transformers:
+  # Путь загрузки повторяет проверенный L1 на transformers 5.20.1 (tools/dataprep/vlm_smoke.py, ветка data/labels):
+  # AutoModelForImageTextToText + AutoProcessor, nf4 (LM) + bf16 (vision), local_files_only, cache_dir weights/hf/hub.
+  device: cuda:0             # cuda:0 | cpu
+  allow_cpu: false           # на CPU 4B-модель — минуты на вызов; по умолчанию стадия пропускается
+  dtype: bfloat16            # Qwen-VL обучены в bf16 (fp16 может переполняться); RTX 4060 (Ada) bf16 поддерживает
+  attn_implementation: null  # null — по умолчанию transformers (как у L1); можно sdpa
+  max_pixels: null           # null — процессор не трогаем: кадры уже ужаты до frames.max_side
+  min_pixels: null
+  skip_quant_modules: [visual, lm_head]   # vision-энкодер и lm_head не квантуем (как у L1)
+  cache_dir: null            # null -> env SENTINEL_HF_CACHE -> <repo>/weights/hf/hub, если есть -> умолчание HF
+  local_files_only: null     # null => берётся из HF_HUB_OFFLINE (прод: HF_HUB_OFFLINE=1, веса скачаны заранее)
+  min_free_vram_mb: 0        # >0: не грузить модель, если свободной VRAM меньше (выставить по замеру bench)
+  license_guard: warn        # strict | warn | off — license в README.md локального снапшота ∈ allowed_licenses
+  allowed_licenses: [apache-2.0, mit, bsd-2-clause, bsd-3-clause]
+
+llamacpp_server:
+  url: http://127.0.0.1:8081 # llama-server -m <gguf> --mmproj <mmproj> --port 8081 -ngl 99 -c 8192
+  health_timeout_s: 1.5
+  use_json_schema: true      # response_format=json_schema (грамматика llama.cpp); при 400 -> json_object
+  local_only: true           # запрет нелокальных адресов (правило 1: никакого облака)
+
+llamacpp_python:
+  models_dir: weights/vlm    # куда A17 кладёт GGUF
+  chat_handler: Qwen25VLChatHandler   # fallback: Llava15ChatHandler
+  n_gpu_layers: -1
+  n_ctx: 8192
+
+# Холодная загрузка модели внутри verify/discover съедает их бюджет: держите модель тёплой (vlm.warmup()).
+runtime:
+  use_registry: true            # внутри воркера A03: модель — через ModelRegistry (вытеснение LRU, unload)
+  registry_vram_gb: 3.5         # резерв для ensure_vram: 2.7 ГБ после загрузки (замер L1) + активации; уточнить bench
+  lazy_load_min_budget_s: 45    # без warmup грузим лениво, только если бюджета >= 45 с
+  load_retry_cooldown_s: 300    # после неудачной загрузки не пробуем снова 5 минут
+
+generation:
+  max_new_tokens_verify: 180   # цель ≤ 6 с/вызов: короткий JSON (≤3 факта); проверить bench
+  max_new_tokens_discover: 220
+  temperature: 0.0
+  call_timeout_s: 12.0       # жёсткий потолок на один вызов (generate(max_time=...), HTTP timeout)
+  # ретраи (1 повтор при невалидном JSON со строгим суффиксом) — лимитируются в budget.*
+  est_call_s: 4.0            # априорная оценка длительности вызова (до первых замеров)
+  budget_safety: 1.15        # не начинать вызов, если остаток < est_call_s * safety
+
+# Общий бюджет VLM-стадии. Время задаёт A03 (budget_s в verify/discover); остальные лимиты — здесь
+# или через аргумент limits={...} (A03 может урезать). Исчерпан любой лимит -> вызовы прекращаются.
+budget:
+  common:
+    max_frames_per_call: 6
+    max_visual_tokens_per_call: 1200   # ~6 кадров 448x252 у Qwen3-VL (32 px/токен)
+    max_output_tokens_per_call: 220
+    max_retries_per_item: 1
+  verify:
+    max_calls: 6
+    max_visual_tokens_total: 6000
+    max_output_tokens_total: 1400
+    max_retries_total: 2
+  verify_qa:                  # один вызов = один forward без генерации (1 выходной «токен»)
+    max_calls: 24
+    max_visual_tokens_total: 8000
+    max_output_tokens_total: 64
+    max_retries_total: 0
+  discover:
+    max_calls: 4
+    max_visual_tokens_total: 3600
+    max_output_tokens_total: 1000
+    max_retries_total: 1
+
+frames:
+  max_side: 448              # длинная сторона кадра на входе VLM
+  verify_n_frames: 5         # 4–6 кадров на событие
+  verify_pad_s: 1.0          # окно t_start-1 … t_end+1
+  verify_max_span_s: 12.0    # длинные события: кадры берём из окна вокруг t_peak
+  image_mode: multi          # multi — N картинок; grid — один коллаж (для бэкендов с 1 картинкой)
+  grid_cols: 3
+  draw_boxes: true
+  draw_timestamps: true
+  box_color: [255, 40, 40]   # RGB
+  jpeg_quality: 85           # для llama.cpp (data:image/jpeg;base64)
+
+verify:
+  mode: json                  # json (фаза 1, по умолчанию) | qa (фаза 2: нейтральные вопросы + логиты; ВЫКЛ до замера L2)
+  # Логит-пулинг: logit(p) = logit(p0) + w * logit(p_vlm); p_vlm = c если visible, иначе 1-c
+  vlm_weight: 0.6
+  p_vlm_clip: [0.05, 0.95]
+  # «Пола» для сильных правил НЕТ: гипотеза правила не истина. Противоречие кадров помечается
+  # extra.vlm.agreement="contradicts" (+ extra.vlm.contradiction=true) — решает fusion.
+  max_raise: 0.25             # VLM сам по себе не поднимает уверенность больше чем на 0.25
+  agree_threshold: 0.6        # p_vlm >= 0.6 -> supports; <= 0.4 -> contradicts; иначе uncertain
+  retype_sources: [temporal, vlm]   # чьи события VLM может переклассифицировать
+  retype_min_conf: 0.7
+  drop_below: null            # null — verify никогда не удаляет события (решает fusion)
+  # extra.vlm.verdict/score — мнение для ml.fusion (confirm|reject|unsure). Флаг ниже дополнительно ставит
+  # extra.vlm_verdict="rejected" — встроенное слияние A03 такие события ВЫБРАСЫВАЕТ; выкл. до замера L2.
+  emit_vlm_verdict_rejected: false
+  max_facts: 4
+  dedupe_iou_s: 0.6           # совпадающие по времени события одного типа проверяем один раз
+  priority: uncertain_first   # uncertain_first | confidence_desc | time
+
+# Режим verify.mode=qa: вопросы/кадры/пороги — в ml/vlm/qa_spec.yaml (меняет L2 по замерам).
+qa:
+  spec_path: null             # null — ml/vlm/qa_spec.yaml
+  vlm_weight: 0.6             # вес умножается на «доказательность» ответов (p_support + p_contra)
+  crop_pad: 0.1               # поля вокруг зоны для кропа (доля размера зоны)
+  refine_t_peak: false        # подменять t_peak моментом смены ответа (t_transition) — только после замера L2
+
+discover:
+  enabled: false              # выключен до локального бенчмарка (скорость/FP); включает A03/конфиг
+  window_s: 3.0
+  frames_per_window: 4
+  prior: 0.25                 # низкий априор для находок discover
+  vlm_weight: 0.6
+  max_conf: 0.6               # discover сам по себе не даёт «уверенного» события
+  min_vlm_conf: 0.55          # находка ниже этого порога отбрасывается
+  max_events: 4
+  reverify: true              # подтверждать находку вторым вызовом verify (если есть бюджет)
+  reverify_reserve_calls: 1   # после первой находки держим 1 вызов в резерве под reverify
+  motion_weighting: true
+  motion_downscale: 64
+  min_coverage_windows: 3     # минимум окон по равномерной сетке, даже если движения нет
+  merge_gap_s: 1.5
+  checklist:                  # пункт чек-листа -> type_id каталога
+    phone: V05
+    food_drink: V06
+    safe_open_unattended: V03
+    outsider_in_cashier_area: V01
+    cash_unattended: V02
+    bag_handover_violation: V07
+    door_open: V04
+    hands_hidden: V08
+    other: V99
+
+facts_filter:
+  max_len: 220
+  drop_hedges: true           # «вероятно», «скорее всего» — это вывод, а не наблюдение
+  require_anchor: true        # факт должен называть видимый объект/роль (кассир, телефон, сейф, ...)
+  # Фильтр по стоп-словам НЕ гарантирует отсутствие галлюцинаций — это только грубая страховка.
+
+# Приватность: реальные кадры и тексты ответов VLM пишутся ТОЛЬКО локально (outputs/ в .gitignore),
+# в stdout/логи/статусы — только технические ошибки и агрегаты (облачный агент их не должен видеть).
+privacy:
+  local_dump_dir: outputs/vlm   # куда CLI (try/bench) сохраняет кадры и ответы; null — не сохранять
+  keep_raw_in_extra: false      # сырой текст ответа в Event.extra.vlm не кладём
+
+# ml.vlm.service — та же модель для чата копилота A14 (второй экземпляр не грузится). Анализ всегда раньше чата.
+service:
+  chat:
+    enabled: true
+    max_new_tokens: 384
+    max_new_tokens_cap: 768
+    timeout_s: 20.0           # потолок генерации одного ответа (generate max_time)
+    timeout_cap_s: 45.0
+    wait_s: 10.0              # сколько чат ждёт GPU (анализ — в приоритете); дальше честный ответ busy
+    max_input_chars: 12000
+    allow_cold_load: true     # можно ли чату загрузить модель, если анализ её ещё не грузил
+
+mock:
+  latency_s: 0.0
+  mode: neutral               # neutral | confirm | reject | garbage | phone (env SENTINEL_VLM_MOCK_MODE)

@@ -1,0 +1,16 @@
+[
+  {
+    "name": "scene_signals_lr (опционально, обучается локально)",
+    "hf_id_or_url": "local: weights/scene/scene_signals.json — python -m ml.scene.train_signals",
+    "license": "Apache-2.0",
+    "size_mb": 0.01,
+    "purpose": "Логрегрессия/маленький MLP (numpy, JSON без pickle) на ROI-признаках для safe_open/door_open/cash_visible; обучается только на проверенных метках команды; по умолчанию не используется (файла нет)"
+  },
+  {
+    "name": "SigLIP2 base patch16-224 (опционально, H2 — именование кластеров вида ROI; по умолчанию выкл)",
+    "hf_id_or_url": "google/siglip2-base-patch16-224",
+    "license": "Apache-2.0",
+    "size_mb": 1500,
+    "purpose": "Zero-shot open/closed по ≤6 цветным кропам ROI сейфа/двери на ролик; офлайн из weights/hf/hub (L1); fp16 на GPU; при недоступности — выключен, не мок"
+  }
+]

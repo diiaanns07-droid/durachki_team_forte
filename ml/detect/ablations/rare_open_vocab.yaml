@@ -1,0 +1,6 @@
+# Абляция A05 (единственное изменение относительно baseline):
+# desk_inventory / safe_door_state + редкий проход OWLv2 (≤2 кадров окна на вызов, контрастные запросы).
+# Применение: SENTINEL_DETECT_CONFIG=ml/detect/ablations/rare_open_vocab.yaml  (или SENTINEL_DETECT_EXTRAS=rare_open_vocab)
+# По умолчанию ВЫКЛЮЧЕНО, пока L2 не измерил выигрыш (см. ml/detect/README.md, «Замер L2»).
+inventory:
+  mode: rare_open_vocab

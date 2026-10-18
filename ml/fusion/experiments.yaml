@@ -1,0 +1,24 @@
+# Варианты для замера L2: python -m ml.fusion.ab --preds preds_raw/ --labels data/labels.csv
+# Каждый вариант — переопределение config.yaml (глубокое слияние). baseline — текущие умолчания.
+# Новый режим включается в config.yaml по умолчанию ТОЛЬКО после выигрыша на этом замере.
+baseline: {}
+temporal_bonus:            # temporal только в бонусе согласия
+  temporal_mode: bonus
+temporal_score:            # поведение фазы 1: temporal может задать скор
+  temporal_mode: score
+v02_after_window:          # «ушла и оставила» по столу/сейфу после ухода
+  policies: {v02_after_window: {enabled: true}}
+v01_client_side:           # клиент напротив — норма
+  policies: {v01_client_side: {enabled: true}}
+negative_evidence:         # контр-факты снижают скор
+  policies: {negative_evidence: {enabled: true}}
+all_policies:
+  policies: {v02_after_window: {enabled: true}, v01_client_side: {enabled: true}, negative_evidence: {enabled: true}}
+observation_report:        # правила-наблюдения A09 (телефон/еда) как нарушения
+  report_gate: {observation_policy: report}
+no_uncap:                  # не восстанавливать уверенность A09, срезанную из-за нормы
+  report_gate: {uncap_norm_review: false}
+timecode_onset:            # таймкод = начало кластера (переход)
+  timecode: {policy: onset}
+evidence_action:           # кадры «ключевой момент + до/после» (смотреть глазами: --videos)
+  evidence: {policy: action}

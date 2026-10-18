@@ -1,0 +1,4 @@
+# Платформенные пины A17. Пусто намеренно: окружение задаёт lock L1
+# (tools/dataprep/requirements-l1.lock.txt: torch 2.11.0+cu128, transformers 5.20.1, bitsandbytes 0.50.2,
+# opencv-python-headless 4.14 (<5)). merge_requirements.py проверяет требования модулей против него.
+# Прежний пин torch==2.6.0 (cu124) снят: он противоречил lock L1.

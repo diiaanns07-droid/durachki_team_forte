@@ -1,0 +1,183 @@
+# Kassa Sentinel — ml/temporal (A10). Все пороги и гиперпараметры здесь.
+# Переопределение: env SENTINEL_TEMPORAL_CONFIG=<путь к своему yaml> (мерджится поверх этого файла).
+version: 1
+
+paths:
+  # относительные пути считаются от корня репо; env SENTINEL_CACHE_DIR / SENTINEL_WEIGHTS_DIR перекрывают
+  cache_dir: cache
+  features_subdir: features
+  weights_dir: weights/temporal
+  reports_dir: reports
+  outputs_dir: outputs/temporal
+
+features:
+  backend: siglip2                 # siglip2 | mock (SENTINEL_MOCK=1 принудительно включает mock)
+  model_id: google/siglip2-base-patch16-224
+  fps: 4.0                         # частота признаков (шаг сетки модели = 1/fps)
+  cpu_fps: 1.0                     # если нет CUDA — реже, чтобы уложиться в SLA
+  batch_size: 64
+  fp16: true                       # только на CUDA
+  device: auto                     # auto | cpu | cuda
+  hf_cache: weights/hf/hub         # офлайн-веса (если каталог есть; env HF_HUB_CACHE/HF_HOME приоритетнее)
+  views: [full, focus]             # full — весь кадр; focus — адаптивный кроп (зона кассира или область движения)
+  # Виды по зонам A06 (кропы bbox зоны; зоны нет -> вид неизвестен, NaN). Выключено, пока L2 не измерит пользу:
+  # zone_views: [desk, safe, cashier_area, door]
+  zone_views: []
+  cpu_views: [full]
+  focus:
+    mode: auto                     # auto: zone если зоны переданы, иначе motion | zone | motion
+    min_side: 0.45                 # мин. сторона кропа, доля короткой стороны кадра
+    expand: 1.35                   # расширение рамки области движения
+    motion_window_s: 1.0           # окно для карты движения (± сек)
+    motion_downscale: 96           # размер длинной стороны для расчёта движения
+    smooth_alpha: 0.6              # EMA сглаживание центра кропа между шагами
+  mock_dim: 64
+  max_frames: 1200                 # защита от очень длинных видео (шаг увеличится)
+
+prompts_file: prompts.yaml
+
+augment:                           # «другой угол» на этапе извлечения (только для обучения)
+  n_aug: 2                         # сколько аугментированных копий на видео
+  max_corner_shift: 0.12           # смещение углов перспективы, доля стороны
+  max_rotate_deg: 12
+  min_crop: 0.80
+  flip_prob: 0.5
+  brightness: 0.25
+  contrast: 0.25
+
+labels:
+  time_offset_s: 0.0               # «22 секунда» -> 22.0 + offset
+  # Конфликт меток внутри группы дубликатов (один файл «нарушение», другой «без»):
+  # positive — группа считается позитивной (все исходные метки сохраняются в index/отчёте); exclude — исключить
+  conflict_policy: positive
+  # Разные таймкоды у дубликатов (Х-4/Х-47: 57 и 68 с) — решает человек. both — обе секунды остаются
+  # якорями (ничего не выбрано произвольно); video_only — кадровый надзор снят, только метка видео.
+  time_conflict_policy: both
+  duplicate_groups:                # группы дубликатов (по md5 находятся автоматически, это — страховка)
+    - [X-4, X-47]
+    - [X-5, X-48]
+
+baseline:                          # первый обучаемый результат: логрегрессия по кадрам на замороженных признаках
+  context_s: 2.0                   # + скользящее среднее признаков (временной контекст, модель остаётся линейной)
+  l2: 0.001
+  iters: 400
+  lr: 0.05
+
+model:                             # temporal head (TCN+BiGRU) — сравнение с baseline
+  arch: tcn                        # tcn | gru | tcn_gru (GRU ~5x медленнее на CPU: 156 vs 31 мс/шаг)
+  input_groups: [sims, emb, dyn]   # sims — zero-shot сходства; emb — эмбеддинги; dyn — движение/смена кадра
+  emb_pca: 32                      # PCA эмбеддингов на вид (подгоняется на обучающей выборке)
+  # группа change (выключена по умолчанию; включается в input_groups): изменения во времени по каждому виду
+  change_lags_s: [2.0, 8.0]        # 1−cos(e_t, e_{t−Δ})
+  change_deltas_s: [1.0, 3.0]      # 1−cos(среднее [t−Δ,t), среднее [t,t+Δ)) — «до/после» (уход, вход, поднесла)
+  hidden: 64
+  tcn_kernel: 5
+  tcn_dilations: [1, 2, 4, 8]
+  dropout: 0.3
+  input_dropout: 0.2
+  view_dropout: 0.15               # вероятность занулить целиком один вид (full/focus)
+  n_types: 9                       # V01..V08, V99
+
+train:
+  seed: 13
+  # Вес в обучении: group — каждая группа (уникальное видео, дубликаты свёрнуты) весит одинаково, её версии
+  # (оригинал + аугментации) делят этот вес; frame — старый режим (каждый кадр = 1, длинные чистые ролики доминируют)
+  weighting: group
+  epochs: 60
+  steps_per_epoch: 12
+  batch_size: 8
+  lr: 0.002
+  weight_decay: 0.01
+  window_s: 48.0                   # длина случайного окна
+  pos_window_prob: 0.85            # окно содержит размеченную секунду
+  sigma_s: 1.5                     # гауссиана вокруг размеченной секунды — локальная слабая разметка
+  far_radius_s: 3.0                # в позитивном видео дальше этого от метки — НЕИЗВЕСТНО (маска)
+  far_weight: 0.0                  # 0 = маска: одна размеченная секунда не делает остальное негативом
+  pos_weight_max: 20.0
+  mil_weight: 0.5                  # вес MIL-потери уровня видео
+  mil_topk_frac: 0.04
+  type_weight: 0.3                 # голова типа учится ТОЛЬКО если в labels.csv есть проверенный type_id
+  use_pseudo_types: false          # псевдометки типа (type_status=vlm/pseudo) — только явно; помечаются «предварительно»
+  aug_prob: 0.7                    # доля батчей, где берём аугментированную копию признаков
+  time_warp: [0.8, 1.25]
+  time_warp_prob: 0.5
+  noise_std: 0.02
+  mixup_prob: 0.2
+  mixup_alpha: 0.4
+  device: auto                     # auto | cpu | cuda
+  max_minutes: 8.0                 # жёсткий бюджет на обучение
+
+cv:
+  # Nested CV: внешний сгруппированный сплит (оценка) × внутренний (калибровка порога только на train).
+  # Скейлер/PCA/модель/порог подгоняются на train каждого внешнего фолда; валидация — только оригиналы
+  # (аугментированные копии и дубликаты той же группы в валидацию и в train этого фолда не попадают).
+  outer: loo                       # loo | <int> (для baseline)
+  outer_temporal: 5                # temporal head дороже: по умолчанию 5 фолдов
+  inner: 3                         # внутренние фолды для порога
+  epochs: 40                       # эпох temporal head в CV
+  holdout_frac: 0.0                # >0: отложить группы (оценка один раз); на 42 уже исследованных роликах это
+                                   # НЕ независимый holdout — только разведочная проверка процедуры
+  hit_tolerances_s: [1, 2, 3]
+  timecode_policies: [peak, onset, change_onset]  # какие политики таймкода мерить в отчёте
+  duration_watchdog_rho: 0.3       # |ρ(скор, длительность)| на чистых роликах выше — предупреждение
+  threshold_margin: 0.02           # порог = max(score негативов inner-OOF) + margin (FP=0) / FP≤1
+  min_recall_fp0: 0.8
+
+propose:                           # генератор кандидатов для VLM/правил: propose(clip) -> 3–8 Event
+  mode: hybrid                     # risk | change | hybrid — выбрать по замеру (cv/bench: candidates)
+  max_candidates: 8
+  min_candidates: 3
+  n_risk: 4                        # hybrid: сначала до n_risk пиков риска, остальное — кривая изменений
+  nms_s: 2.0                       # минимальное расстояние между кандидатами
+  window_s: 2.0                    # t_start/t_end кандидата = t ± window_s (окно для VLM)
+  change_deltas_s: [1.0, 3.0]      # окна «до/после» для контраста эмбеддингов
+  motion_weight: 0.5               # вклад начала движения в кривую изменений
+  change_salience_cap: 0.3         # уверенность кандидата из кривой изменений не выше (это не детекция)
+  recall_tol_s: 1.5
+  budgets: [3, 5, 8]
+
+experiments:                       # ≤ 3 заранее описанные конфигурации; сравниваются на одних и тех же фолдах
+  E0:
+    description: "baseline: логрегрессия по кадрам на SigLIP2, равный вес групп, пулинг topk_null"
+    kind: baseline
+    overrides: {}
+  E1:
+    description: "E0 + признаки изменения (change: лаги и контраст «до/после»)"
+    kind: baseline
+    overrides: {model: {input_groups: [sims, emb, dyn, change]}}
+  E2:
+    description: "temporal head (TCN + MIL) на тех же признаках, что E1"
+    kind: temporal
+    overrides: {model: {input_groups: [sims, emb, dyn, change]}}
+
+bench:
+  folds: 5
+  repeats: 3
+  inner: 3
+
+infer:
+  # Нет чекпоинта / несовместимость / ошибка / слишком короткое видео: raise — TemporalUnavailable (стадия temporal
+  # в пайплайне получает status=error с причиной, fusion: degraded; пустой результат не выдаётся за «чисто»);
+  # empty — старое поведение ([], []) + status()
+  on_unavailable: raise
+  # Пулинг уровня видео (исправление: max по кадрам смещён в пользу длинных чистых роликов):
+  # max — старый (для сравнения) | topk — среднее pool_k лучших окон | topk_null — topk, нормированный по
+  # числу окон через null-CDF чистых роликов (подгоняется внутренним CV только на train).
+  pooling: topk_null
+  pool_k: 4                        # окон по risk_step_s (4 × 0.5 с = 2 с)
+  null_tau_s: 4.0                  # длина блока null-модели (≈ время декорреляции риска)
+  peak_rel: 0.6                    # события score(): пики ≥ peak_rel × максимум кривой (если видео помечено)
+  timecode_policy: peak            # peak | onset | change_onset — выбрать по замеру (cv: timecode_by_policy)
+  onset_ratio: 0.5
+  onset_max_s: 6.0
+  risk_step_s: 0.5
+  smooth_s: 1.0                    # сглаживание риск-кривой (окно, сек)
+  event_threshold: 0.55            # пик выше — событие (перекрывается weights/temporal/meta.json:threshold)
+  zero_shot_threshold: 0.5         # порог для режима без обученной модели (по sigmoid-вероятности SigLIP)
+  extent_ratio: 0.5                # границы события: риск >= ratio * пик
+  min_peak_distance_s: 6.0
+  max_events: 3
+  zero_shot_conf_cap: 0.45         # без обученной модели уверенность не выше
+  type_margin: 0.015               # минимальный отрыв zero-shot типа от «нормы», иначе V99
+  budget_s: 30.0                   # бюджет по умолчанию на score()
+  min_frames: 4

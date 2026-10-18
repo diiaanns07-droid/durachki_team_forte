@@ -1,0 +1,210 @@
+# ml/pose/config.yaml — все пороги модуля A07 (поза + поза-сигналы).
+# Расстояния в signals.* — в единицах «масштаба тела» s (≈ ширина плеч трека, робастная оценка),
+# геометрия изотропная (x домножается на W/H кадра), время — в секундах.
+# Переопределить файл: SENTINEL_POSE_CONFIG=/path/to.yaml (deep-merge поверх этого файла).
+version: 1
+
+# Главный флаг стадии позы (env SENTINEL_POSE_ENABLED=0|1|auto перекрывает) — для замера вклада позы (L2):
+#   auto  — работаем, если веса выбранного бэкенда найдены; нет весов → stage_status "skipped" + warning
+#   true  — поза обязательна для этого запуска: нет бэкенда/весов → stage_status "failed"
+#   false — стадия выключена: estimate() → [] (stage_status "skipped"), все сигналы позы unknown
+enabled: auto
+
+backend:
+  # Один реальный бэкенд: RTMPose-m (COCO-17) на onnxruntime (CUDA → CPU). MediaPipe — только opt-in
+  # (order: [rtmpose_onnx, mediapipe]) с явным маппингом 33 → COCO-17 (ml/pose/backends/mediapipe_backend.py).
+  # Mock — ТОЛЬКО по явному SENTINEL_MOCK=1 / SENTINEL_POSE_BACKEND=mock: при сбое реального бэкенда
+  # поддельные позы не подставляются — estimate() вернёт [] и запишет ошибку в ml.pose.status().
+  # SENTINEL_POSE_BACKEND=rtmpose_onnx|mediapipe|mock — один бэкенд вместо order (для A/B у L2).
+  order: [rtmpose_onnx]
+  device: auto                  # auto | cuda | cpu
+  rtmpose:
+    model: rtmpose-m            # COCO-17, body7; whole-body (RTMW) — optional, не по умолчанию
+    onnx_path: null             # явный путь; иначе $SENTINEL_POSE_ONNX, затем поиск в каталогах весов
+    input_size: [192, 256]      # (w, h)
+    mean: [123.675, 116.28, 103.53]
+    std: [58.395, 57.12, 57.375]
+    bgr_to_rgb: false           # как в rtmlib (совместимость с его выходами)
+    padding: 1.25
+    simcc_split_ratio: 2.0
+    batch_size: 16              # кропы батчуются через кадры; если ONNX с фиксированным batch=1 — цикл
+    intra_op_threads: 0         # 0 = по умолчанию onnxruntime
+  mediapipe:                    # Pose Landmarker (Tasks API) — переключаемый вариант, по умолчанию не в order
+    variant: full               # lite | full | heavy → pose_landmarker_<variant>.task
+    task_path: null             # явный путь; иначе $SENTINEL_POSE_MP_TASK, затем каталоги весов
+    delegate: cpu               # cpu | gpu (GPU-делегат в python — только Linux)
+    num_poses: 2                # в кропе бывает второй человек — выбираем позу по пересечению с bbox трека
+    min_pose_detection_confidence: 0.3
+    min_pose_presence_confidence: 0.3
+    min_tracking_confidence: 0.3
+    crop_padding: 1.4           # контекст вокруг bbox для детектора BlazePose
+    upscale_min_side: 384       # короткая сторона кропа доводится до N px (апскейл только вверх)
+    upscale_max: 3.0
+    use_presence: true          # score = min(visibility, presence)
+    visibility_scale: 1.0       # visibility MediaPipe ≠ score RTMPose; множитель для порогов
+    selection:                  # перекрывает selection.* для этого бэкенда: только кассир, один кроп на кадр
+      max_persons_per_frame: 1
+      roles: [cashier]
+      roles_fallback: top1      # если ни у одного трека нет роли cashier — берём top-1 по приоритету
+
+selection:
+  max_persons_per_frame: 3       # лимит кропов на кадр
+  max_crops_total: 2500          # лимит кропов на видео (145 с × 5 fps × ~3 чел.)
+  role_priority: {cashier: 3.0, collector: 2.5, visitor: 1.5, unknown: 1.0}
+  priority_zones: [cashier_area, desk, safe, cash_tray]
+  zone_bonus: 2.0               # бонус приоритета за пересечение bbox с priority_zones (если zones переданы)
+  min_box_area: 0.002           # норм. площадь bbox; меньше — не оцениваем позу
+  # Невалидный bbox трека (NaN/inf, x2<=x1/y2<=y1, вне 0..1 — например, пиксели) → поза не оценивается.
+  min_pose_score: 0.3           # если ни одна точка позы не уверенна (max score ниже) — позу не выдаём (unknown)
+  geometry_margin: 0.35         # точки дальше этой доли размера bbox за его краем — чужие → score 0
+  box_time_tolerance_s: 0.25    # bbox трека считается «в кадре», если есть наблюдение в ±tol
+  max_interp_gap_s: 1.0         # линейная интерполяция bbox между наблюдениями трека
+  budget_s: 10.0                # мягкий бюджет estimate(); при превышении прогноза — адаптивный шаг по кадрам
+  budget_probe_frames: 20       # по скольким первым кадрам мерить скорость
+  max_stride: 5                 # максимальное прореживание сэмплов (5 fps → 1 fps)
+
+smoothing:
+  enabled: true
+  min_score: 0.3                # ниже — точка «невидима»: фильтр не обновляется, держим прошлое значение
+  hold_s: 0.6                   # сколько держать последнее значение невидимой точки
+  keep_raw: false               # класть сырые точки в PoseFrameX.extra["raw_keypoints"]
+  one_euro: {min_cutoff: 1.0, beta: 4.0, d_cutoff: 1.0}   # координаты нормированные (0..1): beta ~ 4
+
+signals:
+  # Семантика выхода: ключ в SceneState.signals ЕСТЬ только когда сигнал определим (достаточная
+  # видимость + нужный предмет). Нет ключа = unknown (окклюзия / низкая уверенность / нет предмета /
+  # нет кассира в кадре). Значение ≥ 0.5 ⇔ сигнал активен после гистерезиса, < 0.5 — наблюдаемое «нет».
+  # Жесты без предмета (рука у головы, рука ко рту, кисти не видны) — только в extra["gestures"],
+  # это НЕ доказательство телефона / еды / сокрытия рук.
+  # Немного надёжных сигналов вместо множества хрупких жестов (фаза 2). Выключенные считаются только по
+  # явному включению (код сохранён): phone_to_ear (рука у уха сверху почти всегда перекрыта, телефон и так
+  # ловит phone_in_hand), cashier_facing_away (зависит от разметки L/R и зон).
+  enabled: [phone_in_hand, eating_drinking, hands_hidden, handover_motion]
+  extras:                       # доп. выходы в extra; новые режимы выключены до замера L2
+    bending_to_safe: false      # хрупкий жест (наклон к сейфу)
+    item_placed_on_desk: false  # новый режим: кто и когда положил предмет на стол (V09/V07-кандидаты)
+    motion: false               # новый режим: sitting/standing/walking + направление движения кассира (V02)
+  kp_min_score: 0.3             # точка используется в геометрии, если score >= порога
+  default_aspect_wh: 0.5472     # W/H кадра, если неизвестен (портрет 464x848)
+  scale:
+    percentile: 75              # робастная ширина плеч трека
+    min_valid_frames: 3
+    head_to_shoulder: 2.6       # s ≈ k * (расстояние между ушами), если плечи плохие
+    bbox_frac: 0.35             # s ≈ frac * sqrt(w*h) bbox-а, последний fallback
+  staff_roles: [cashier]        # «кассирские» сигналы считаются только по трекам с этими ролями
+  obj_time_tolerance_s: 0.5     # объект-трек считается присутствующим в ±tol от t
+  phone_labels: [cell_phone]
+  food_labels: [cup, bottle, food]
+  cash_labels: [cash, money_counter, cash_bag]
+  phone_to_ear:                 # рука у уха ≥ 1.5 с И телефон (cell_phone) у головы/кисти
+    near: 0.35                  # запястье–ухо ≤ near → жест 1
+    far: 0.75                   # ≥ far → 0
+    gesture_neg: 0.15           # жест ≤ порога при ОБЕИХ видимых кистях → наблюдаемое «нет»
+    both_hands_penalty: 0.6     # обе кисти у головы (поправляет волосы/потягивается) — ослабляем
+    mouth_pref_ratio: 0.6       # если d(рот) < ratio*d(ухо) — похоже на рот, ослабляем
+    mouth_penalty: 0.7
+    phone_near: 0.8             # телефон-bbox ближе к голове/кисти (в s) — предмет подтверждён
+    thr_on: 0.6
+    thr_off: 0.4
+    min_duration_s: 1.5
+    max_gap_s: 0.6
+  phone_in_hand:                # только если трек cell_phone присутствует в момент t
+    near: 0.3                   # запястье–bbox телефона
+    far: 0.7
+    body_far: 2.5               # телефон далеко от тела (в s) — наблюдаемое «не в руке» даже без кистей
+    thr_on: 0.6
+    thr_off: 0.4
+    min_duration_s: 1.0
+    max_gap_s: 0.6
+  eating_drinking:              # повторяющееся «кисть ко рту» И cup/bottle/food у кисти/рта
+    near: 0.4                   # запястье–рот ≤ near — «у рта»
+    far: 0.9                    # ≥ far — «далеко»
+    max_approach_s: 3.0         # переход far → near не дольше
+    min_dwell_s: 0.15
+    max_dwell_s: 6.0
+    min_wrist_travel: 0.5       # амплитуда движения запястья к рту
+    wrist_vs_head_ratio: 1.5    # запястье должно пройти > ratio * путь головы (не «голова к рукам»)
+    window_s: 30.0              # окно подсчёта повторов
+    min_cycles: 2               # без предмета — только жест в extra
+    object_near: 0.8            # предмет ближе к кисти/рту (в s) во время подхода
+    evidence_single_object: 0.7
+    evidence_multi_object: 0.85
+    evidence_per_extra_cycle: 0.05
+    thr_on: 0.6
+    thr_off: 0.4
+    min_duration_s: 0.4
+    max_gap_s: 1.0
+  hands_hidden:
+    wrist_visible_score: 0.35   # обе кисти видны (≥ порога) → наблюдаемое «руки видны» (значение 0)
+    torso_min_score: 0.4        # плечи видны — для жеста hands_not_visible в extra
+    allow_positive_from_pose: false  # пропавшие точки ≠ сокрытие рук; позитив только через другие модули
+    min_duration_s: 2.0
+    max_gap_s: 0.6
+  cashier_facing_away:
+    require_desk_zone: true     # без зоны desk/cashier_area ориентация «от стола» не определяется → unknown
+    min_facing_conf: 0.35
+    nose_weight: 0.0            # вклад «плечи→нос»; >0 только для почти вертикальной камеры
+    min_nose_offset: 0.1
+    away_cos: -0.3              # cos(ориентация, к столу) ≤ away_cos → «спиной к столу»
+    toward_cos: 0.2             # ≥ toward_cos → точно не «спиной»
+    door_cos: 0.75              # смотрит на дверь
+    thr_on: 0.6
+    thr_off: 0.4
+    min_duration_s: 2.0
+    max_gap_s: 0.6
+  handover_motion:              # кисти двух людей сближаются (над столом / лотком, если зоны есть)
+    near: 0.3                   # запястье A – запястье B
+    far: 0.7
+    min_reach: 0.45             # кисть вытянута от своего тела (иначе — просто стоят рядом)
+    same_person_dist: 0.6       # центры плеч ближе — вероятно дубликат одного человека, пару пропускаем
+    zone_names: [desk, cash_tray]
+    zone_margin: 0.05
+    outside_zone_factor: 0.6
+    thr_on: 0.55
+    thr_off: 0.35
+    min_duration_s: 0.4
+    max_gap_s: 0.6
+  bending_to_safe:              # extra; только при наличии зоны safe
+    zone_margin: 0.04
+    bend_ratio: 0.75            # |голова–таз| / медиана трека ниже → наклон
+    base: 0.6
+    thr_on: 0.6
+    thr_off: 0.4
+    min_duration_s: 0.6
+    max_gap_s: 0.6
+  item_placed_on_desk:          # extra; нужны зона desk и объект-треки в tracks, иначе unknown
+    labels: [bag, cash_bag, document, keys, cell_phone, cup, bottle, food, cash]
+    zone_names: [desk]
+    zone_margin: 0.03           # центр предмета ближе к зоне desk (доли высоты кадра)
+    persist_s: 2.0              # предмет «лёг»: неподвижен не меньше
+    stable_dist: 0.03           # допуск смещения центра «лежащего» предмета (доли высоты кадра)
+    pre_s: 2.0                  # кисть у предмета не раньше, чем за pre_s до «лёг»
+    post_s: 0.6
+    release_s: 3.0              # кисть уходит от предмета (≥ far) в течение release_s после «лёг»
+    near: 0.5                   # кисть–bbox предмета (в s)
+    far: 1.0
+    reid_gap_s: 2.0             # новый трек на месте старого того же класса — смена id, не событие
+    hold_s: 2.0                 # сколько держать значение после «лёг»
+  motion:                       # extra["motion"]; скорость центра корпуса в масштабах тела s за секунду
+    window_s: 1.0               # окно оценки скорости
+    walk_speed_min: 0.6         # ниже — не идёт (переминается, ёрзает на стуле)
+    walk_speed_full: 1.2        # выше — уверенно идёт
+    thr_on: 0.6
+    thr_off: 0.4
+    min_duration_s: 0.8
+    max_gap_s: 0.4
+    sit_hi: 0.6                 # sitting ≥ sit_hi → «сидит»; ≤ sit_lo → «стоит»
+    sit_lo: 0.4
+    toward_cos: 0.7             # направление отрезка ходьбы к центру зоны (cos ≥) → toward / (≤ -) → away_from
+    zone_names: [door, desk, safe, cashier_area, client_area, cash_tray]
+  posture:                      # extra; sitting/standing — эвристика, None при низкой уверенности
+    sit_angle_lo_deg: 35        # угол бедро/корпус: ниже — стоит
+    sit_angle_hi_deg: 70        # выше — сидит
+    height_ratio_sit: 0.75      # высота bbox / p90 высоты трека ниже → вероятно сидит
+    min_conf: 0.4
+mock:
+  seed: 7
+  jitter: 0.004                 # шум точек (норм.)
+  # Скрипт действий для synth-видео: "action:t0-t1[@track];..." (action: phone_to_ear | eating | handover |
+  # hands_hidden | facing_away | bend). Можно задать env SENTINEL_POSE_MOCK_SCRIPT.
+  script: ""

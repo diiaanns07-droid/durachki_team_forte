@@ -1,0 +1,13 @@
+# backend/api (A02). Проверено: Python 3.13 + fastapi 0.143.3 / starlette 1.6.0 / python-multipart 0.0.32.
+# Целевой прод: Python 3.11 (Windows 11 / WSL2 / Docker).
+fastapi>=0.115,<1.0
+starlette>=0.40
+uvicorn[standard]>=0.30
+python-multipart>=0.0.18
+anyio>=4.4
+PyYAML>=6.0
+# декодер для проверки загружаемого MOV (один из; cv2 нужен и пайплайну A04)
+opencv-python-headless>=4.8
+# тесты
+pytest>=8.0
+httpx>=0.27

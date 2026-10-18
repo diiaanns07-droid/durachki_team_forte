@@ -1,0 +1,28 @@
+# Эксперимент L2 (разбор ошибок): pose_rules + путь VLM по кадрам (discover.mode=states), в слияние — только V01.
+# Один фактор относительно pose_rules: включён vlm_discover, события пути VLM ограничены типом V01
+# (у старого профиля это самый точный тип пути VLM на знакомых видео; выбор — диагностика, не независимый тест).
+pipeline_version: "1.1.0-pose_rules_vlm01"
+stages:
+  scene: false
+  rules: false
+  seqrules: true
+  temporal: false
+  vlm_verify: false
+  vlm_discover: true
+vlm_discover_types: [V01]
+required_stages: [ingest, detect, track, pose, seqrules, fusion]
+budgets_s:
+  pose: 25
+  seqrules: 30
+  vlm_discover: 300         # под дедлайн сервера 270 с (3000 → стадия пропускалась по оценке бюджета); X-14 142 с: VLM 172 с
+gpu:
+  vram_gb:
+    seqrules: 1.0
+    vlm_discover: 3.5
+warmup:
+  vlm: false
+timeouts:
+  min_s: 300.0
+  hard_factor: 8.0
+executor:
+  load_clip_timeout_s: 180

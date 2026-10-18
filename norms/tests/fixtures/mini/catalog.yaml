@@ -1,0 +1,52 @@
+# Мини-фикстура для тестов валидатора (не реальные нормы).
+version: 1
+exclusions:
+  - "Тестовое общее исключение."
+documents:
+  doc_a:
+    title: "Тестовый документ А"
+    url: "https://adilet.zan.kz/rus/docs/TEST0001"
+    source_file: "sources/doc_a.md"
+types:
+  V01:
+    name: "Тестовый тип"
+    legal_status: candidate
+    legal_note: "Тестовое основание."
+    observable: ["видно X"]
+    not_observable: ["не видно Y"]
+    exclusions: ["X без Z — не нарушение"]
+    description_template: "{t}: {facts}."
+    severity: high
+    examples:
+      - kind: positive
+        facts: ["видно X"]
+        signals: {cash_visible: 1.0, n_persons: 2}
+        expected: candidate
+      - kind: unknown
+        facts: ["X не видно"]
+        signals: {cash_visible: null}
+        expected: unknown
+    rules:
+      - document: "Тестовый документ А"
+        clause: "п. 1"
+        url: "https://adilet.zan.kz/rus/docs/TEST0001"
+        quote: "Кассовый работник выполняет тестовое требование в присутствии клиента."
+        verified: false
+    rule_checks:
+      - quote_level: snippet
+        quote_checked_by_human: false
+        applicability_checked_by_human: false
+        currency: "не сверено"
+        applicability: "тест"
+        conditions_visible: ["X"]
+        conditions_not_visible: ["Y"]
+  V99:
+    name: "Иное"
+    legal_status: disabled
+    legal_note: "Catch-all."
+    observable: ["видно что-то"]
+    not_observable: ["умысел"]
+    exclusions: ["всё из общего списка"]
+    description_template: "{t}: {facts}."
+    severity: low
+    rules: []

@@ -1,0 +1,23 @@
+[
+  {
+    "name": "SigLIP2 base patch16 224",
+    "hf_id_or_url": "google/siglip2-base-patch16-224",
+    "license": "Apache-2.0",
+    "size_mb": 1500,
+    "purpose": "Замороженный энкодер: эмбеддинги кадра (весь кадр + адаптивный кроп) и zero-shot сходства с текстовыми подсказками. size_mb — оценка (~375M параметров в fp32), уточнить по фактическим файлам."
+  },
+  {
+    "name": "Kassa Sentinel temporal baseline (logreg)",
+    "hf_id_or_url": "local: weights/temporal/baseline/ (обучается командой, python -m ml.temporal.train)",
+    "license": "Apache-2.0 (собственный код/веса команды)",
+    "size_mb": 0.1,
+    "purpose": "Первый обучаемый результат: логистическая регрессия по кадрам на замороженных признаках (+ скользящее среднее), numpy."
+  },
+  {
+    "name": "Kassa Sentinel temporal head (TCN, опц. BiGRU)",
+    "hf_id_or_url": "local: weights/temporal/temporal/ (обучается командой, python -m ml.temporal.train)",
+    "license": "Apache-2.0 (собственный код/веса команды)",
+    "size_mb": 0.5,
+    "purpose": "Сравнение с baseline: временная сеть (~92k параметров) — риск на шаге 0.25 с + MIL уровня видео; голова типа — только при проверенных type_id."
+  }
+]

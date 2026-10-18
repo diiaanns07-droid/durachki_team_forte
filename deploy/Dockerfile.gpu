@@ -1,0 +1,112 @@
+# syntax=docker/dockerfile:1.7
+# =============================================================================
+# Kassa Sentinel — GPU-образ (владелец A17)
+# Сборка из КОРНЯ репозитория:
+#   docker build -f deploy/Dockerfile.gpu -t kassa-sentinel:gpu .
+# или через compose:  docker compose -f deploy/docker-compose.yml build
+#
+# Стадии:
+#   frontend  — node 20 собирает frontend/ (A15) → /out/frontend_dist
+#   reqs      — deploy/merge_requirements.py сводит */requirements.txt всех модулей
+#   runtime   — CUDA 12.4 + cuDNN 9, Python 3.11 (uv), ffmpeg, torch cu124, код, dist
+#
+# Веса В ОБРАЗ НЕ КЛАДЁМ (правило 6 + размер): монтируются томом в /app/weights.
+# Контекст фильтрует deploy/Dockerfile.gpu.dockerignore (BuildKit).
+# =============================================================================
+ARG CUDA_IMAGE=nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+ARG NODE_IMAGE=node:20-bookworm-slim
+ARG PY_TOOL_IMAGE=python:3.11-slim-bookworm
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.32
+
+FROM ${UV_IMAGE} AS uv
+
+# ----------------------------------------------------------------------------- frontend
+FROM ${NODE_IMAGE} AS frontend
+ENV CI=1 NPM_CONFIG_UPDATE_NOTIFIER=false NPM_CONFIG_FUND=false NPM_CONFIG_AUDIT=false
+WORKDIR /build
+# Монтируем весь (отфильтрованный) контекст: frontend/ может ещё не существовать в ветке —
+# скрипт тогда положит страницу-заглушку, а не уронит сборку.
+RUN --mount=type=bind,source=.,target=/ctx \
+    --mount=type=cache,target=/root/.npm \
+    sh /ctx/deploy/docker/build_frontend.sh /ctx/frontend /out/frontend_dist
+
+# ----------------------------------------------------------------------------- reqs
+FROM ${PY_TOOL_IMAGE} AS reqs
+ARG REQ_PROFILE=gpu
+RUN --mount=type=bind,source=.,target=/ctx \
+    mkdir -p /out \
+ && python /ctx/deploy/merge_requirements.py --root /ctx --profile "${REQ_PROFILE}" \
+      --out /out/requirements-all.txt --torch-out /out/requirements-torch.txt
+
+# ----------------------------------------------------------------------------- runtime
+FROM ${CUDA_IMAGE} AS runtime
+ARG PYTHON_VERSION=3.11
+ARG APP_UID=10001
+ARG APP_GID=10001
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu124
+ARG TORCH_VERSION=2.6.0
+ARG TORCHVISION_VERSION=0.21.0
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+    PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PYTHONIOENCODING=utf-8 \
+    UV_PYTHON_INSTALL_DIR=/opt/python UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 \
+    UV_CACHE_DIR=/root/.cache/uv UV_PYTHON_PREFERENCE=only-managed
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl tini ffmpeg libglib2.0-0 libgl1 libgomp1 \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=uv /uv /uvx /usr/local/bin/
+
+# Python 3.11 (python-build-standalone через uv) + venv
+RUN uv python install "${PYTHON_VERSION}" \
+ && uv venv /opt/venv --python "${PYTHON_VERSION}" \
+ && chmod -R a+rX /opt/python /opt/venv
+ENV VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:${PATH}
+
+# 1) torch/torchvision строго из индекса PyTorch (cu124), 2) остальное — с PyPI,
+#    torch зафиксирован constraint-ом, чтобы транзитивная зависимость его не подменила.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /opt/venv/bin/python --index-url "${TORCH_INDEX_URL}" \
+      "torch==${TORCH_VERSION}" "torchvision==${TORCHVISION_VERSION}" \
+ && printf 'torch==%s\ntorchvision==%s\n' "${TORCH_VERSION}" "${TORCHVISION_VERSION}" > /opt/torch-constraints.txt
+
+COPY --from=reqs /out/ /opt/req/
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /opt/venv/bin/python \
+      -r /opt/req/requirements-all.txt -c /opt/torch-constraints.txt
+
+# Непривилегированный пользователь; каталоги под тома
+RUN groupadd -g "${APP_GID}" sentinel \
+ && useradd -m -u "${APP_UID}" -g "${APP_GID}" -s /bin/bash sentinel \
+ && mkdir -p /app/data /app/weights /app/cache /app/logs \
+ && chown -R sentinel:sentinel /app
+
+WORKDIR /app
+COPY --chown=${APP_UID}:${APP_GID} . /app
+COPY --from=frontend --chown=${APP_UID}:${APP_GID} /out/frontend_dist /app/frontend/dist
+RUN sed -i 's/\r$//' /app/deploy/docker/*.sh /app/deploy/*.sh \
+ && chmod +x /app/deploy/docker/*.sh /app/deploy/*.sh
+
+# Рантайм: пути (совпадают с томами compose) + жёсткий офлайн для HF/transformers.
+ENV PYTHONPATH=/app \
+    SENTINEL_DATA_DIR=/app/data SENTINEL_WEIGHTS=/app/weights SENTINEL_CACHE_DIR=/app/cache \
+    SENTINEL_LOG_DIR=/app/logs SENTINEL_FRONTEND_DIST=/app/frontend/dist \
+    SENTINEL_DEVICE=cuda SENTINEL_PORT=8000 \
+    HF_HOME=/app/weights/hf HF_HUB_CACHE=/app/weights/hf/hub TORCH_HOME=/app/weights/torch \
+    HF_MODULES_CACHE=/app/cache/hf_modules HF_ASSETS_CACHE=/app/cache/hf_assets \
+    XDG_CACHE_HOME=/app/cache/xdg MPLCONFIGDIR=/app/cache/mpl \
+    HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
+    HF_HUB_DISABLE_TELEMETRY=1 HF_HUB_DISABLE_IMPLICIT_TOKEN=1 DO_NOT_TRACK=1 \
+    NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+
+USER sentinel
+EXPOSE 8000
+# Liveness: любой HTTP-ответ < 500 от uvicorn. start-period — на прогрев моделей.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=3 \
+  CMD python /app/deploy/healthcheck.py live --quiet || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/deploy/docker/entrypoint.sh"]
+CMD ["serve"]

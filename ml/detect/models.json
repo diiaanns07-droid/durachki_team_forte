@@ -1,0 +1,50 @@
+[
+  {
+    "name": "RT-DETRv2-S (r18vd), COCO",
+    "hf_id_or_url": "PekingU/rtdetr_v2_r18vd",
+    "license": "apache-2.0",
+    "license_status": "declared_unverified",
+    "license_source": "https://huggingface.co/PekingU/rtdetr_v2_r18vd (model card metadata); code: https://github.com/lyuwenyu/RT-DETR/blob/main/LICENSE",
+    "size_mb": 80,
+    "size_status": "approximate",
+    "purpose": "BASELINE closed-set детектор на каждом сэмпле (person, cell_phone, cup, bottle, food, laptop, bag, document)",
+    "role": "baseline",
+    "notes": "Лицензию ВЕСА проверить на этапе setup: python -m ml.detect.licenses --check (сверяет card_data.license и LICENSE в снапшоте). Название семейства не заменяет проверку конкретного чекпойнта. Скачан у L1 в weights/hf/hub (загрузка офлайн проверена L1)."
+  },
+  {
+    "name": "D-FINE-M, Objects365→COCO",
+    "hf_id_or_url": "ustc-community/dfine-medium-obj2coco",
+    "license": "apache-2.0",
+    "license_status": "declared_unverified",
+    "license_source": "https://huggingface.co/ustc-community/dfine-medium-obj2coco (model card metadata); code: https://github.com/Peterande/D-FINE/blob/master/LICENSE",
+    "size_mb": 80,
+    "size_status": "approximate",
+    "purpose": "Явная альтернатива closed-set (closed_set.hf_model_id или hf_fallback_ids); по умолчанию НЕ используется и молча не подставляется. Скачан у L1 (weights/hf/hub)",
+    "role": "optional",
+    "notes": "Выбирать только после замера L2 (probe). При явном резерве status=degraded + warning. Лицензию веса проверить: python -m ml.detect.licenses --check"
+  },
+  {
+    "name": "OWLv2 base patch16 ensemble",
+    "hf_id_or_url": "google/owlv2-base-patch16-ensemble",
+    "license": "apache-2.0",
+    "license_status": "declared_unverified",
+    "license_source": "https://huggingface.co/google/owlv2-base-patch16-ensemble (model card metadata); code: https://github.com/google-research/scenic/blob/main/LICENSE",
+    "size_mb": 620,
+    "size_status": "approximate",
+    "purpose": "ОПЦИОНАЛЬНО: open-vocab на ключевых кадрах detect() (extras) и редкий проход desk_inventory/safe_door_state (inventory.mode=rare_open_vocab); предложения разметки (autolabel.py). Скачан у L1",
+    "role": "optional",
+    "notes": "Включается SENTINEL_DETECT_EXTRAS=open_vocab. Метки open-vocab — визуальное сходство с текстовым запросом (напр. 'green canvas bag'), не доказательство назначения предмета."
+  },
+  {
+    "name": "Дообученный RT-DETRv2 (ONNX), классы домена",
+    "hf_id_or_url": "local:weights/detect/finetuned/model.onnx",
+    "license": "apache-2.0 (наследует базовый чекпойнт; датасет — внутренний)",
+    "license_status": "derived",
+    "license_source": "наследуется от PekingU/rtdetr_v2_r18vd",
+    "size_mb": 80,
+    "size_status": "approximate",
+    "purpose": "ОПЦИОНАЛЬНО: cash, cash_bag, safe_open, money_counter, cell_phone на каждом сэмпле. Обучается только на ПРОВЕРЕННОЙ человеком разметке (finetune.py)",
+    "role": "optional",
+    "notes": "Не существует, пока команда не разметила и не проверила данные локально. В git не коммитится."
+  }
+]

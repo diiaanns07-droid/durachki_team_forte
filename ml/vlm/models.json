@@ -1,0 +1,56 @@
+[
+  {
+    "name": "Qwen3-VL-4B-Instruct",
+    "hf_id_or_url": "Qwen/Qwen3-VL-4B-Instruct",
+    "license": "Apache-2.0",
+    "size_mb": 8900,
+    "size_note": "приблизительный размер скачивания (bf16 safetensors) по карточке модели; локально не измерялся",
+    "purpose": "ОСНОВНАЯ: backend transformers, 4-bit bitsandbytes (nf4), vision-энкодер не квантуется. verify() и discover(). VRAM не измерена — мерить python -m ml.vlm.bench",
+    "role": "default",
+    "offline": "cache_dir weights/hf/hub (раскладка L1/A17), HF_HUB_OFFLINE=1 -> local_files_only=True",
+    "measured_by_L1": {
+      "config": "nf4 LM + bf16 vision, transformers 5.20.1, RTX 4060 Laptop 8 GB",
+      "vram_after_load_gb": 2.71,
+      "peak_gb_6_fullres_frames": 4.72,
+      "load_s": 12,
+      "snapshot": "ebb281ec",
+      "note": "латентность L1 — smoke на 2 новых токенах, не полный JSON"
+    }
+  },
+  {
+    "name": "Qwen3-VL-8B-Instruct",
+    "hf_id_or_url": "Qwen/Qwen3-VL-8B-Instruct",
+    "license": "Apache-2.0",
+    "size_mb": 17500,
+    "size_note": "приблизительно (bf16); в 4-bit заметно больше 4B — брать только если bench покажет запас VRAM",
+    "purpose": "Опциональная, точнее 4B; пресет qwen3vl8b",
+    "role": "optional"
+  },
+  {
+    "name": "Qwen2.5-VL-7B-Instruct-AWQ",
+    "hf_id_or_url": "Qwen/Qwen2.5-VL-7B-Instruct-AWQ",
+    "license": "Apache-2.0",
+    "size_mb": 6600,
+    "size_note": "приблизительно; требует autoawq (MIT) — на Windows может не собраться",
+    "purpose": "НЕ используется: по замеру L1 на 8 ГБ рядом с рабочим столом не помещается (6.9 ГБ весов)",
+    "role": "not-used"
+  },
+  {
+    "name": "Qwen3-VL-2B-Instruct",
+    "hf_id_or_url": "Qwen/Qwen3-VL-2B-Instruct",
+    "license": "Apache-2.0",
+    "size_mb": 4300,
+    "size_note": "приблизительно (bf16)",
+    "purpose": "Запасная лёгкая — переход на неё только по результатам замера памяти/скорости (не по умолчанию). НЕ путать с запрещённой Qwen2.5-VL-3B (research license)",
+    "role": "fallback-by-measurement"
+  },
+  {
+    "name": "Qwen3-VL-4B-Instruct-GGUF (Q4_K_M + mmproj F16)",
+    "hf_id_or_url": "Qwen/Qwen3-VL-4B-Instruct-GGUF",
+    "license": "Apache-2.0",
+    "size_mb": 3300,
+    "size_note": "приблизительно; точные имена файлов сверить в репозитории перед скачиванием",
+    "purpose": "НЕ используется: локальная копия GGUF у L1 недокачана; второй стек не строим (фаза 2)",
+    "role": "not-used"
+  }
+]

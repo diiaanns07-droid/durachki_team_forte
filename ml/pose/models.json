@@ -1,0 +1,17 @@
+[
+  {
+    "name": "RTMPose-m body7 (COCO-17, 256x192, SimCC, ONNX)",
+    "hf_id_or_url": "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-m_simcc-body7_pt-body7_420e-256x192-e48f03d0_20230504.zip",
+    "license": "Apache-2.0",
+    "size_mb": 54,
+    "purpose": "Бэкенд по умолчанию (backend.order): top-down поза COCO-17 по bbox-ам person-треков (onnxruntime CUDA → CPU). Веса у L2 не скачаны — сервис без них работает (stage_status skipped). size_mb ≈ 13.6M параметров × 4 байта, не измерено."
+  },
+  {
+    "name": "MediaPipe Pose Landmarker full (BlazePose GHUM, .task, float16)",
+    "hf_id_or_url": "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task",
+    "license": "Apache-2.0",
+    "size_mb": 9.0,
+    "sha256": "4eaa5eb7a98365221087693fcc286334cf0858e2eb6e15b506aa4a7ecdcec4ad",
+    "purpose": "Переключаемый вариант (SENTINEL_POSE_BACKEND=mediapipe): поза по кропу кассира с апскейлом, 33 точки явно → COCO-17. Размер и sha256 — скачанного в песочнице файла (9 398 198 байт)."
+  }
+]

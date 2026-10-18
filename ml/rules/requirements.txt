@@ -1,0 +1,6 @@
+# A09 ml/rules — зависимости (проверено: Python 3.11 + numpy 1.26.4 / PyYAML 6.0.2 / pytest 8.3.3;
+# Python 3.13 + numpy 2.5.3 / PyYAML 6.0.1 / pytest 9.1.1)
+numpy>=1.24,<3      # BSD-3-Clause
+PyYAML>=6.0,<7      # MIT
+# только для тестов
+pytest>=8.0         # MIT

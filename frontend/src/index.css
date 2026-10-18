@@ -1,0 +1,608 @@
+/*
+ * Kassa Sentinel — стили веб-интерфейса.
+ *
+ * U01 (визуальный стиль). Токены и стили РАБОЧЕЙ ОБЛАСТИ живут только внутри контейнера `.ks-ws`
+ * (корень App и порталы модалок). Глобальные base-правила и прежние классы (.card, .btn-*, .chip, .label,
+ * .input) ниже НЕ меняются: всё, что вне рабочей области (в т. ч. будущая стартовая сцена), выглядит как
+ * раньше. Переопределения внутри `.ks-ws` пишутся парой селекторов `:where(.ks-ws) .x, .dark :where(.ks-ws) .x`:
+ * специфичность та же, что у заменяемых правил, поэтому утилиты Tailwind на элементе по-прежнему главнее.
+ *
+ * Семантика цвета:
+ *   акцент (--ks-accent, тёмно-синий ink / светлый в тёмной теме) — действия, активная навигация, фокус;
+ *   красный (--ks-event)   — ТОЛЬКО события (эпизоды, вердикт «нарушение») и ошибки;
+ *   зелёный (--ks-success) — ТОЛЬКО подтверждённый успешный исход (чистый вердикт с подтверждённой полнотой,
+ *                            завершённая стадия, проверенная цитата, сохранено);
+ *   янтарный (--ks-warning) — предупреждения, демо, «стоит просмотреть»;
+ *   нейтральный (--ks-info) — справочные метки (в т. ч. «локальная обработка»).
+ * Малиновый brand — только знак (логотип), не для кнопок и статусов.
+ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply font-sans;
+    font-feature-settings: "cv11", "ss01", "tnum" 0;
+  }
+  h1, h2, h3 {
+    @apply font-display tracking-tight;
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand-500/60 ring-offset-2 ring-offset-white dark:ring-offset-ink-950;
+  }
+
+  /* ---------- U01: токены рабочей области (светлая тема) ---------- */
+  .ks-ws {
+    /* поверхности (RGB-тройки: rgb(var(--x) / alpha)) */
+    --ks-bg: 248 250 252;            /* фон страницы — slate-50 */
+    --ks-surface: 255 255 255;       /* карточка, шапка, модалка */
+    --ks-surface-2: 245 247 251;     /* вложенная плашка, hover — ink-50 */
+    --ks-surface-3: 233 237 245;     /* нажатие, дорожка прогресса — ink-100 */
+    /* текст */
+    --ks-text: 15 23 42;             /* основной — slate-900 */
+    --ks-text-2: 71 85 105;          /* вторичный — slate-600 */
+    --ks-text-3: 100 116 139;        /* подписи, метки — slate-500 */
+    /* границы (готовые цвета) */
+    --ks-border: rgb(226 232 240);           /* slate-200 */
+    --ks-border-strong: rgb(203 213 225);    /* поля ввода, вторичные кнопки — slate-300 */
+    /* акцент: действия, активная навигация, фокус */
+    --ks-accent: 29 39 64;           /* ink-800 */
+    --ks-accent-hover: 18 26 46;     /* ink-900 */
+    --ks-accent-contrast: 255 255 255;
+    --ks-accent-soft: 63 79 116;     /* ink-600, использовать с альфой .08–.14 */
+    --ks-focus: 86 104 143;          /* ink-500: контраст к белому ≈ 5.7:1 */
+    /* статусы: основной цвет, текст на мягком фоне, мягкий фон, граница */
+    --ks-event: 225 29 72;           /* rose-600 */
+    --ks-event-text: 190 18 60;      /* rose-700 */
+    --ks-event-contrast: 255 255 255; /* текст на сплошном --ks-event (≈ 6:1) */
+    --ks-event-soft: rgb(255 241 242);
+    --ks-event-border: rgb(254 205 211);
+    --ks-success: 5 150 105;         /* emerald-600 */
+    --ks-success-text: 4 120 87;     /* emerald-700 */
+    --ks-success-soft: rgb(236 253 245);
+    --ks-success-border: rgb(167 243 208);
+    --ks-warning: 217 119 6;         /* amber-600 */
+    --ks-warning-text: 146 64 14;    /* amber-800 */
+    --ks-warning-soft: rgb(255 251 235);
+    --ks-warning-border: rgb(253 230 138);
+    --ks-info: 63 79 116;            /* ink-600 */
+    --ks-info-text: 47 60 91;        /* ink-700 */
+    --ks-info-soft: rgb(245 247 251);
+    --ks-info-border: rgb(207 215 230);
+    --ks-overlay: rgb(10 15 29 / 0.6);
+    /* радиусы */
+    --ks-radius-sm: 8px;             /* чипы-плашки, мелкие элементы */
+    --ks-radius-md: 12px;            /* кнопки, поля, навигация */
+    --ks-radius-lg: 16px;            /* карточки, модалки */
+    --ks-radius-pill: 999px;         /* статус-чипы */
+    /* расстояния (шаг 4 px) */
+    --ks-space-1: 4px;
+    --ks-space-2: 8px;
+    --ks-space-3: 12px;
+    --ks-space-4: 16px;
+    --ks-space-5: 20px;
+    --ks-space-6: 24px;
+    --ks-space-8: 32px;
+    --ks-space-10: 40px;
+    --ks-space-12: 48px;
+    --ks-space-16: 64px;
+    /* компоновка */
+    --ks-content-max: 1320px;
+    --ks-gutter: 16px;               /* 24 px от 640, 32 px от 1024 */
+    --ks-header-h: 64px;
+    --ks-section-gap: 24px;
+    --ks-control-h: 40px;
+    --ks-control-h-sm: 32px;
+    --ks-control-h-lg: 48px;
+    /* шрифты — локальные @fontsource (Inter Variable, Manrope Variable) */
+    --ks-font-sans: "Inter Variable", Inter, system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+    --ks-font-display: "Manrope Variable", Manrope, "Inter Variable", system-ui, sans-serif;
+    --ks-font-mono: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
+    /* тени */
+    --ks-shadow-card: 0 1px 2px rgb(16 24 40 / 0.04), 0 4px 16px -4px rgb(16 24 40 / 0.08);
+    --ks-shadow-lift: 0 10px 40px -12px rgb(16 24 40 / 0.25);
+    --ks-shadow-action: 0 1px 2px rgb(16 24 40 / 0.12), 0 6px 16px -8px rgb(29 39 64 / 0.55);
+
+    color: rgb(var(--ks-text));
+    font-family: var(--ks-font-sans);
+  }
+
+  /* ---------- U01: токены рабочей области (тёмная тема) ---------- */
+  .dark .ks-ws {
+    --ks-bg: 10 15 29;               /* ink-950 */
+    --ks-surface: 18 26 46;          /* ink-900 */
+    --ks-surface-2: 24 33 56;
+    --ks-surface-3: 29 39 64;        /* ink-800 */
+    --ks-text: 241 245 249;          /* slate-100 */
+    --ks-text-2: 203 213 225;        /* slate-300 */
+    --ks-text-3: 148 163 184;        /* slate-400 */
+    --ks-border: rgb(255 255 255 / 0.08);
+    --ks-border-strong: rgb(255 255 255 / 0.14);
+    --ks-accent: 241 245 249;        /* главное действие — светлое на тёмном */
+    --ks-accent-hover: 226 232 240;
+    --ks-accent-contrast: 10 15 29;
+    --ks-accent-soft: 255 255 255;
+    --ks-focus: 168 181 207;         /* ink-300: контраст к ink-950 ≈ 9:1 */
+    --ks-event: 251 113 133;         /* rose-400 */
+    --ks-event-text: 253 164 175;    /* rose-300 */
+    --ks-event-contrast: 10 15 29;   /* на rose-400 белый даёт ≈ 2.7:1, тёмный ink-950 ≈ 7:1 */
+    --ks-event-soft: rgb(251 113 133 / 0.1);
+    --ks-event-border: rgb(251 113 133 / 0.28);
+    --ks-success: 52 211 153;        /* emerald-400 */
+    --ks-success-text: 110 231 183;  /* emerald-300 */
+    --ks-success-soft: rgb(52 211 153 / 0.1);
+    --ks-success-border: rgb(52 211 153 / 0.28);
+    --ks-warning: 251 191 36;        /* amber-400 */
+    --ks-warning-text: 252 211 77;   /* amber-300 */
+    --ks-warning-soft: rgb(251 191 36 / 0.1);
+    --ks-warning-border: rgb(251 191 36 / 0.3);
+    --ks-info: 168 181 207;
+    --ks-info-text: 203 213 225;
+    --ks-info-soft: rgb(255 255 255 / 0.05);
+    --ks-info-border: rgb(255 255 255 / 0.12);
+    --ks-overlay: rgb(4 7 15 / 0.7);
+    --ks-shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
+    --ks-shadow-lift: 0 18px 48px -16px rgb(0 0 0 / 0.65);
+    --ks-shadow-action: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 20px -10px rgb(148 163 184 / 0.35);
+  }
+
+  @media (min-width: 640px) {
+    .ks-ws {
+      --ks-gutter: 24px;
+    }
+  }
+  @media (min-width: 1024px) {
+    .ks-ws {
+      --ks-gutter: 32px;
+    }
+  }
+
+  /* фон страницы рабочей области (только у корня App; порталы его не получают) */
+  .ks-ws-page {
+    background-color: rgb(var(--ks-bg));
+  }
+
+  :where(.ks-ws) :is(h1, h2, h3) {
+    font-family: var(--ks-font-display);
+    letter-spacing: -0.015em;
+  }
+  :where(.ks-ws) :focus-visible {
+    --tw-ring-color: rgb(var(--ks-focus) / 0.75);
+    --tw-ring-offset-color: rgb(var(--ks-bg));
+  }
+  :where(.ks-ws) ::selection {
+    background-color: rgb(var(--ks-accent-soft) / 0.18);
+  }
+}
+
+@layer components {
+  /* ---------- прежние глобальные классы (без изменений: вне .ks-ws всё как было) ---------- */
+  .card {
+    @apply rounded-2xl border border-slate-200/80 bg-white shadow-card dark:border-white/[.07] dark:bg-ink-900;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition
+      disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-ink-900 text-white hover:bg-ink-800 dark:bg-white dark:text-ink-900 dark:hover:bg-slate-200;
+  }
+  .btn-brand {
+    @apply btn bg-brand-600 text-white shadow-sm hover:bg-brand-700;
+  }
+  .btn-ghost {
+    @apply btn border border-slate-200 bg-white text-slate-700 hover:bg-slate-50
+      dark:border-white/10 dark:bg-white/[.03] dark:text-slate-200 dark:hover:bg-white/[.07];
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium;
+  }
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+  .label {
+    @apply text-[11px] font-semibold uppercase tracking-[.08em] text-slate-500 dark:text-slate-400;
+  }
+  .input {
+    @apply w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400
+      focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20
+      dark:border-white/10 dark:bg-ink-950 dark:text-slate-100;
+  }
+
+  /* ---------- U01: те же классы внутри рабочей области — на токенах ---------- */
+  :where(.ks-ws) .card,
+  .dark :where(.ks-ws) .card {
+    border-radius: var(--ks-radius-lg);
+    border-color: var(--ks-border);
+    background-color: rgb(var(--ks-surface));
+    box-shadow: var(--ks-shadow-card);
+  }
+
+  /* .btn-primary/.btn-brand/.btn-ghost в разметке идут БЕЗ .btn (прежние классы копируют .btn через @apply),
+     поэтому общие правила — через :is(); :is()/:where() не добавляют лишней специфичности.
+     Сам .btn в эти списки НЕ входит: `@apply btn` копирует каждое правило с классом .btn, и оно
+     размножилось бы в .btn-primary/.btn-brand/.btn-ghost. Голый .btn (кнопки на фоне вердикта) остаётся
+     прежним: rounded-xl = 12 px = --ks-radius-md. */
+  :where(.ks-ws) :is(.btn-primary, .btn-brand, .btn-ghost, .btn-quiet, .btn-danger, .btn-event),
+  .dark :where(.ks-ws) :is(.btn-primary, .btn-brand, .btn-ghost) {
+    border-radius: var(--ks-radius-md);
+    transition-property: color, background-color, border-color, box-shadow, opacity;
+    transition-duration: 150ms;
+  }
+  :where(.ks-ws) :is(.btn-primary, .btn-brand, .btn-ghost, .btn-quiet, .btn-danger, .btn-event):disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+    box-shadow: none;
+  }
+
+  /* Главное действие экрана: сплошной акцент. .btn-brand больше не малиновый внутри рабочей области —
+     красный зарезервирован за событиями и ошибками. */
+  :where(.ks-ws) .btn-primary,
+  :where(.ks-ws) .btn-brand,
+  .dark :where(.ks-ws) .btn-primary,
+  .dark :where(.ks-ws) .btn-brand {
+    border: 1px solid transparent;
+    background-color: rgb(var(--ks-accent));
+    color: rgb(var(--ks-accent-contrast));
+    box-shadow: var(--ks-shadow-action);
+  }
+  :where(.ks-ws) .btn-primary:hover:where(:not(:disabled)),
+  :where(.ks-ws) .btn-brand:hover:where(:not(:disabled)),
+  .dark :where(.ks-ws) .btn-primary:hover:where(:not(:disabled)),
+  .dark :where(.ks-ws) .btn-brand:hover:where(:not(:disabled)) {
+    background-color: rgb(var(--ks-accent-hover));
+  }
+
+  /* Вторичное действие */
+  :where(.ks-ws) .btn-ghost,
+  .dark :where(.ks-ws) .btn-ghost {
+    border: 1px solid var(--ks-border-strong);
+    background-color: rgb(var(--ks-surface));
+    color: rgb(var(--ks-text));
+  }
+  :where(.ks-ws) .btn-ghost:hover:where(:not(:disabled)),
+  .dark :where(.ks-ws) .btn-ghost:hover:where(:not(:disabled)) {
+    background-color: rgb(var(--ks-surface-2));
+  }
+
+  /* Новые варианты (только в рабочей области). Общая геометрия — одним правилом, как у .btn
+     (без @apply btn: иначе правило .btn копируется в каждый вариант). */
+  :where(.ks-ws) :is(.btn-quiet, .btn-danger, .btn-event) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--ks-space-2);
+    padding: 10px var(--ks-space-4);
+    border: 1px solid transparent;
+    font-size: 14px;
+    line-height: 20px;
+    font-weight: 600;
+  }
+  :where(.ks-ws) .btn-quiet {
+    background-color: transparent;
+    color: rgb(var(--ks-text-2));
+  }
+  :where(.ks-ws) .btn-quiet:hover:where(:not(:disabled)) {
+    background-color: rgb(var(--ks-accent-soft) / 0.08);
+    color: rgb(var(--ks-text));
+  }
+  :where(.ks-ws) .btn-danger {
+    background-color: rgb(var(--ks-event));
+    color: rgb(var(--ks-event-contrast));
+  }
+  :where(.ks-ws) .btn-danger:hover:where(:not(:disabled)) {
+    background-color: rgb(var(--ks-event-text));
+  }
+  :where(.ks-ws) .btn-event {
+    border-color: var(--ks-event-border);
+    background-color: var(--ks-event-soft);
+    color: rgb(var(--ks-event-text));
+  }
+  :where(.ks-ws) .btn-sm {
+    min-height: var(--ks-control-h-sm);
+    padding: 0 var(--ks-space-3);
+    font-size: 13px;
+  }
+  :where(.ks-ws) .btn-lg {
+    min-height: var(--ks-control-h-lg);
+    padding: 0 var(--ks-space-6);
+    font-size: 15px;
+  }
+  :where(.ks-ws) .ks-icon-btn {
+    @apply inline-flex items-center justify-center;
+    height: 36px;
+    width: 36px;
+    border-radius: var(--ks-radius-md);
+    color: rgb(var(--ks-text-2));
+    transition: background-color 150ms, color 150ms;
+  }
+  :where(.ks-ws) .ks-icon-btn:hover {
+    background-color: rgb(var(--ks-accent-soft) / 0.08);
+    color: rgb(var(--ks-text));
+  }
+
+  /* Поля ввода */
+  :where(.ks-ws) .input,
+  .dark :where(.ks-ws) .input {
+    border-radius: var(--ks-radius-md);
+    border-color: var(--ks-border-strong);
+    background-color: rgb(var(--ks-surface));
+    color: rgb(var(--ks-text));
+  }
+  :where(.ks-ws) .input::placeholder {
+    color: rgb(var(--ks-text-3));
+  }
+  :where(.ks-ws) .input:focus {
+    border-color: rgb(var(--ks-focus));
+    --tw-ring-color: rgb(var(--ks-focus) / 0.25);
+  }
+
+  /* Метки и заголовки секций */
+  :where(.ks-ws) .label,
+  .dark :where(.ks-ws) .label {
+    color: rgb(var(--ks-text-3));
+  }
+  :where(.ks-ws) .ks-section-title {
+    @apply flex items-center gap-2;
+    font-family: var(--ks-font-display);
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.35;
+    color: rgb(var(--ks-text));
+  }
+  :where(.ks-ws) .ks-section-title > svg {
+    color: rgb(var(--ks-text-3));
+  }
+
+  /* Статус-чипы: тон = смысл, а не украшение */
+  :where(.ks-ws) .chip {
+    border-radius: var(--ks-radius-pill);
+  }
+  :where(.ks-ws) .chip-event {
+    border-color: var(--ks-event-border);
+    background-color: var(--ks-event-soft);
+    color: rgb(var(--ks-event-text));
+  }
+  :where(.ks-ws) .chip-success {
+    border-color: var(--ks-success-border);
+    background-color: var(--ks-success-soft);
+    color: rgb(var(--ks-success-text));
+  }
+  :where(.ks-ws) .chip-warning {
+    border-color: var(--ks-warning-border);
+    background-color: var(--ks-warning-soft);
+    color: rgb(var(--ks-warning-text));
+  }
+  :where(.ks-ws) .chip-info {
+    border-color: var(--ks-info-border);
+    background-color: var(--ks-info-soft);
+    color: rgb(var(--ks-info-text));
+  }
+  :where(.ks-ws) .chip-muted {
+    border-color: var(--ks-border);
+    background-color: rgb(var(--ks-surface-2));
+    color: rgb(var(--ks-text-3));
+  }
+  :where(.ks-ws) .ks-dot {
+    @apply inline-block h-1.5 w-1.5 shrink-0 rounded-full;
+    background-color: currentColor;
+  }
+
+  /* Компоновка */
+  :where(.ks-ws) .ks-container {
+    width: 100%;
+    max-width: var(--ks-content-max);
+    margin-inline: auto;
+    padding-inline: var(--ks-gutter);
+  }
+  :where(.ks-ws) .ks-main {
+    padding-top: var(--ks-space-6);
+    padding-bottom: var(--ks-space-16);
+  }
+
+  /* Шапка и навигация */
+  :where(.ks-ws) .ks-header {
+    border-bottom: 1px solid var(--ks-border);
+    background-color: rgb(var(--ks-surface) / 0.85);
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
+  }
+  :where(.ks-ws) .ks-nav-link {
+    @apply relative inline-flex items-center gap-1.5 text-sm font-medium;
+    height: 36px;
+    padding: 0 var(--ks-space-3);
+    border-radius: var(--ks-radius-md);
+    color: rgb(var(--ks-text-2));
+    transition: background-color 150ms, color 150ms;
+  }
+  :where(.ks-ws) .ks-nav-link:hover {
+    background-color: rgb(var(--ks-accent-soft) / 0.07);
+    color: rgb(var(--ks-text));
+  }
+  :where(.ks-ws) .ks-nav-link[aria-current="page"] {
+    background-color: rgb(var(--ks-accent-soft) / 0.1);
+    color: rgb(var(--ks-text));
+    font-weight: 600;
+  }
+  :where(.ks-ws) .ks-nav-link[aria-current="page"]::after {
+    content: "";
+    position: absolute;
+    left: var(--ks-space-3);
+    right: var(--ks-space-3);
+    bottom: calc((var(--ks-header-h) - 36px) / -2);
+    height: 2px;
+    border-radius: 2px 2px 0 0;
+    background-color: rgb(var(--ks-accent));
+  }
+  :where(.ks-ws) .ks-skip-link {
+    @apply sr-only;
+  }
+  :where(.ks-ws) .ks-skip-link:focus {
+    @apply not-sr-only fixed left-4 top-3 z-[70] px-4 py-2 text-sm font-semibold;
+    border-radius: var(--ks-radius-md);
+    background-color: rgb(var(--ks-accent));
+    color: rgb(var(--ks-accent-contrast));
+  }
+
+  /* Уведомления: всплывающие (toast) и встроенные (notice) */
+  :where(.ks-ws) .ks-toasts {
+    @apply pointer-events-none fixed inset-x-0 bottom-4 z-[60] flex flex-col items-center gap-2 px-4
+      sm:inset-x-auto sm:right-6 sm:items-end;
+  }
+  :where(.ks-ws) .ks-toast {
+    @apply pointer-events-auto flex w-full max-w-sm animate-fade-in items-start gap-2.5 px-4 py-3 text-sm font-medium;
+    border-radius: var(--ks-radius-md);
+    border: 1px solid var(--ks-border);
+    border-left-width: 3px;
+    background-color: rgb(var(--ks-surface));
+    color: rgb(var(--ks-text));
+    box-shadow: var(--ks-shadow-lift);
+  }
+  :where(.ks-ws) .ks-toast > svg {
+    @apply mt-px h-4 w-4 shrink-0;
+  }
+  :where(.ks-ws) .ks-toast[data-tone="info"] {
+    border-left-color: rgb(var(--ks-info));
+  }
+  :where(.ks-ws) .ks-toast[data-tone="info"] > svg {
+    color: rgb(var(--ks-info));
+  }
+  :where(.ks-ws) .ks-toast[data-tone="success"] {
+    border-left-color: rgb(var(--ks-success));
+  }
+  :where(.ks-ws) .ks-toast[data-tone="success"] > svg {
+    color: rgb(var(--ks-success));
+  }
+  :where(.ks-ws) .ks-toast[data-tone="error"] {
+    border-left-color: rgb(var(--ks-event));
+  }
+  :where(.ks-ws) .ks-toast[data-tone="error"] > svg {
+    color: rgb(var(--ks-event));
+  }
+  :where(.ks-ws) .ks-notice {
+    @apply flex items-start gap-2.5 px-4 py-3 text-sm;
+    border-radius: var(--ks-radius-md);
+    border: 1px solid var(--ks-info-border);
+    background-color: var(--ks-info-soft);
+    color: rgb(var(--ks-info-text));
+  }
+  :where(.ks-ws) .ks-notice > svg {
+    @apply mt-px h-4 w-4 shrink-0;
+  }
+  :where(.ks-ws) .ks-notice[data-tone="event"] {
+    border-color: var(--ks-event-border);
+    background-color: var(--ks-event-soft);
+    color: rgb(var(--ks-event-text));
+  }
+  :where(.ks-ws) .ks-notice[data-tone="success"] {
+    border-color: var(--ks-success-border);
+    background-color: var(--ks-success-soft);
+    color: rgb(var(--ks-success-text));
+  }
+  :where(.ks-ws) .ks-notice[data-tone="warning"] {
+    border-color: var(--ks-warning-border);
+    background-color: var(--ks-warning-soft);
+    color: rgb(var(--ks-warning-text));
+  }
+
+  /* Прогресс */
+  :where(.ks-ws) .ks-progress {
+    @apply h-2 w-full overflow-hidden;
+    border-radius: var(--ks-radius-pill);
+    background-color: rgb(var(--ks-surface-3));
+  }
+  :where(.ks-ws) .ks-progress > span {
+    @apply block h-full transition-[width] duration-500 ease-out;
+    border-radius: var(--ks-radius-pill);
+    background-color: rgb(var(--ks-accent));
+  }
+  :where(.ks-ws) .ks-progress[data-tone="ink"] > span {
+    background-color: rgb(var(--ks-text-2));
+  }
+
+  /* Ленты и подвал */
+  :where(.ks-ws) .ks-ribbon-demo {
+    @apply flex flex-wrap items-center justify-center gap-x-3 gap-y-1 px-4 py-1.5 text-center text-xs font-bold uppercase tracking-wider;
+    background-color: rgb(251 191 36);
+    color: rgb(69 26 3);
+  }
+  :where(.ks-ws) .ks-footer {
+    border-top: 1px solid var(--ks-border);
+    color: rgb(var(--ks-text-3));
+  }
+}
+
+.bg-grid {
+  background-image:
+    linear-gradient(to right, rgb(15 23 42 / 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(15 23 42 / 0.05) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+.dark .bg-grid {
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.04) 1px, transparent 1px);
+}
+
+.scrollbar-thin {
+  scrollbar-width: thin;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------- Печатная версия отчёта ---------- */
+@media print {
+  @page {
+    size: A4;
+    margin: 14mm 12mm;
+  }
+  html, body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+  .dark body, .dark .card {
+    background: #fff !important;
+    color: #000 !important;
+  }
+  .ks-ws-page {
+    background: #fff !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  .print-expand {
+    display: block !important;
+    max-height: none !important;
+  }
+  .card {
+    box-shadow: none !important;
+    border-color: #cfd4dc !important;
+    break-inside: avoid;
+  }
+  .print-break {
+    break-before: page;
+  }
+  a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    font-size: 9pt;
+    color: #444;
+    word-break: break-all;
+  }
+}
+.print-only {
+  display: none;
+}

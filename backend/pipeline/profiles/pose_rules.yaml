@@ -1,0 +1,25 @@
+# Профиль pose_rules (L2): люди + скелеты + предметы + треки + зоны + правила по времени (ml.seqrules).
+# Основной путь без VLM: VLM — только опциональная ограниченная проверка (профиль pose_rules_vlm.yaml).
+# Модули: env из deploy/profiles/pose_rules.env (поза — ml/pose/presets/pose_rules.yaml, детектор + open_vocab).
+pipeline_version: "1.1.0-pose_rules"
+stages:
+  scene: false            # сигналы сцены A08 и правила A09 не участвуют: решение — только из последовательностей
+  rules: false
+  seqrules: true
+  temporal: false
+  vlm_verify: false
+  vlm_discover: false
+required_stages: [ingest, detect, track, pose, seqrules, fusion]
+budgets_s:
+  pose: 25
+  seqrules: 30            # включая ограниченные проверки OWLv2 (checks.budget_s в ml/seqrules/config.yaml)
+gpu:
+  vram_gb:
+    seqrules: 1.0
+warmup:
+  vlm: false
+timeouts:
+  min_s: 150.0            # холодный старт CUDA: детектор не должен падать по таймауту стадии
+  hard_factor: 6.0
+executor:
+  load_clip_timeout_s: 120

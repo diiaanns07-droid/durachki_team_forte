@@ -1,0 +1,6 @@
+# CI (scripts/ci_requirements.py): лёгкие зависимости для тестов ml/detect без GPU и без весов.
+# torch/transformers не нужны: тесты с ними помечены slow или пропускаются через importorskip.
+numpy>=1.26
+opencv-python-headless>=4.9
+PyYAML>=6.0
+pytest>=8

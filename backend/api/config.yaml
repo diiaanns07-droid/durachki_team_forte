@@ -1,0 +1,82 @@
+# Kassa Sentinel API (A02) — значения по умолчанию.
+# Любой ключ переопределяется переменной окружения SENTINEL_<KEY_UPPER>,
+# например watchdog_s -> SENTINEL_WATCHDOG_S. Пути относительные к корню репо.
+
+# --- хранилище ---
+data_dir: data                  # data/jobs/<job_id>/, data/jobs.sqlite3
+job_ttl_h: 72                   # через сколько часов удалять завершённые задачи (0 = никогда)
+cleanup_interval_s: 3600
+max_upload_mb: 300
+min_free_disk_mb: 512           # меньше свободного места -> 507 на загрузку
+
+# --- очередь и время (SLA жюри: < 5 мин на пачку из 5–8 видео) ---
+workers: 1                      # потоков-воркеров (uvicorn всегда 1 процесс!)
+gpu_slots: 1                    # одновременно на GPU (согласовано с A03: concurrency = 1)
+gpu_lock_scope: job             # job = весь pipeline.run под семафором; none = pipeline сам
+budget_s: 270                   # deadline_s = budget_s - ожидание в очереди
+job_cap_s: 120                  # потолок deadline_s одной задачи (чтобы одна не съела очередь)
+min_deadline_s: 15              # меньше не даём, даже если опаздываем
+fair_share: true                # делить остаток бюджета между ждущими в очереди
+watchdog_s: 285                 # от начала загрузки: не успели -> failed (partial.json — только подробности для UI)
+deadline_grace_s: 20            # pipeline.run превысил свой deadline_s на столько -> watchdog
+max_queue: 12                   # backlog: активных (в очереди + в работе) больше -> 503 + Retry-After
+max_attempts: 3                 # перезапусков после падения процесса
+max_zombie_workers: 2           # сколько «зависших» потоков терпим, подменяя их новыми
+zombie_release_gpu: false       # false: GPU остаётся за зависшим run() (один владелец GPU вместе с A03)
+cancel_on_timeout: true         # по таймауту вызвать backend.pipeline.cancel(job_id) (A03), если он есть
+hung_gpu_s: 60                  # зависший run() держит GPU дольше -> /readyz 503 (сигнал перезапуска)
+restart_fresh_budget: false     # false: после рестарта дедлайн по-прежнему от приёма файла
+pass_deadline_at: true          # передавать run(..., deadline_at=приём+budget_s), если run его принимает
+
+# --- пайплайн ---
+pipeline: backend.pipeline      # модуль с run()/warmup(); можно module:function
+fake_pipeline: false            # ТОЛЬКО явно для тестов/демо UI. Иначе нет pipeline -> readyz=503, задачи failed
+fake_pipeline_s: 3.0
+allow_mock: false               # SENTINEL_MOCK=1 или meta.mock в результате -> readyz 503 / задача failed
+warmup: true
+warmup_wait_s: 120              # воркер ждёт прогрева не дольше
+evidence_fallback: true         # нет кадров у нарушения -> найти кадр по PTS у timecode_sec (cv2)
+evidence_max_offset_s: 0.5      # допуск |PTS кадра - timecode| ; дальше -> кадра нет (не «первый кадр»)
+evidence_budget_s: 20           # общий бюджет поиска кадров на задачу; кончился -> кадра нет
+                                # нарушение без кадра уходит в candidates (UI); ни одного с кадром -> failed
+video_validation: required      # required: файл должен открыться декодером (cv2/PyAV/ffprobe), иначе 415
+                                # best_effort: нет декодера -> только сигнатура; off: только сигнатура
+copilot_timeout_s: 60
+
+# --- честность и полнота результата ---
+min_coverage: 0.98              # meta.coverage.ratio ниже (или нет meta.coverage) -> no_violation не выдаётся
+                                # (как contracts: coverage.min_ratio_for_no_violation у A01)
+coverage_adapt_stages: false    # НОВЫЙ РЕЖИМ (выкл. до замера L2): покрытие A03 «по стадиям» -> ratio A01
+                                # = min по required_stages. Без него (и без исправления A03/A01) чистые видео = failed
+partial_accept: false           # НОВЫЙ РЕЖИМ (выкл. до замера L2): по таймауту отдать partial.json как done,
+                                # только если полнота >= min_coverage; иначе всегда failed с причиной
+jury_profile: extended          # extended: поля ТЗ + доп. (type_id, rules, meta…); strict: ровно поля ТЗ
+jury_embed_rule: false          # strict: дописывать норму rules[0] в description (у A01 по умолчанию false)
+max_response_mb: 3.0            # ответ GET /jobs/{id} не больше (кадры ужимаются)
+dedup: true                     # тот же файл (sha256) + та же версия пайплайна -> тот же job/результат
+
+# --- безопасность ---
+ui_enabled: true
+ui_token_ttl_s: 43200           # 12 ч — жизнь HttpOnly-cookie сессии UI
+# ui_password: задаётся ТОЛЬКО через env SENTINEL_UI_PASSWORD (вход в UI по паролю; API-ключ тоже подходит)
+cors_origins: ""                # dev: http://localhost:5173 (CORS — не аутентификация!)
+trusted_proxies: "127.0.0.1,::1"  # от кого верить CF-Connecting-IP / X-Forwarded-For
+docs: true                      # /docs и /openapi.json
+
+# rate limit "N/секунд" на IP
+rl_ui_session: "30/60"
+rl_ui_login: "10/60"            # попытки входа в UI (перебор пароля/ключа)
+rl_ui_upload: "12/60"
+rl_ui_read: "600/60"
+rl_ui_ask: "20/60"
+rl_auth_fail: "300/60"          # неудачные попытки API-ключа (защита от перебора)
+
+# --- раздача фронта ---
+frontend_dir: frontend/dist
+mov_as_mp4: true                # отдавать .mov как video/mp4 (Chrome так охотнее играет H.264)
+
+# --- сервер (python -m backend.api) ---
+host: 127.0.0.1
+port: 8000
+log_level: INFO
+log_json: true

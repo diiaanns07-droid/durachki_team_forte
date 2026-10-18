@@ -1,0 +1,15 @@
+# ml/detect — зависимости (лицензии кода в скобках). Baseline:
+numpy>=1.26            # BSD-3
+opencv-python-headless>=4.9   # Apache-2.0 (OpenCV >= 4.5)
+PyYAML>=6.0            # MIT
+torch>=2.3             # BSD-3   (CUDA-сборка для RTX 4060 ставится по инструкции A17/deploy)
+transformers>=4.52     # Apache-2.0 (RTDetrV2/D-FINE/OWLv2; проверено на 5.20.1)
+huggingface_hub>=0.23  # Apache-2.0 (только setup: скачивание весов)
+safetensors>=0.4       # Apache-2.0
+# Опционально:
+onnxruntime-gpu>=1.18  # MIT — дообученная модель в ONNX (или onnxruntime на CPU)
+albumentations>=1.4    # MIT — аугментации при дообучении (finetune.py)
+accelerate>=1.1        # Apache-2.0 — нужен transformers.Trainer (finetune.py)
+onnx>=1.16             # Apache-2.0 — экспорт дообученной модели
+# Тесты:
+pytest>=8

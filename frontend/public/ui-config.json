@@ -1,0 +1,14 @@
+{
+  "_comment": "Рантайм-флаги UI Kassa Sentinel (A15). Правьте dist/ui-config.json без пересборки. Описание полей — frontend/src/lib/uiConfig.ts и README.",
+  "pollIntervalMs": 1500,
+  "pollMaxIntervalMs": 10000,
+  "pausePollingWhenHidden": true,
+  "seekPauses": true,
+  "episodePrerollS": 2,
+  "episodePostrollS": 1,
+  "beforeAfterTypes": ["V02", "V03", "V07"],
+  "beforeOffsetS": 2,
+  "highlightMaxDtS": 0.1,
+  "ptsOffsetMode": "none",
+  "showReviewHints": true
+}

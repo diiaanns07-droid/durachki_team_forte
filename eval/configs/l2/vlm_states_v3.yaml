@@ -1,0 +1,14 @@
+runtime:
+  lazy_load_min_budget_s: 0
+generation:
+  call_timeout_s: 30.0
+transformers:
+  max_pixels: 409600
+discover:
+  enabled: true
+  mode: states
+  states:
+    frames_per_call: 1
+    max_side: 640
+    max_new_tokens: 60
+    max_events: 4

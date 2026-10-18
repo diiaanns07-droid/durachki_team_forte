@@ -1,0 +1,190 @@
+# ml/detect/config.yaml — все пороги модуля детекции (A05).
+# Переопределение: env SENTINEL_DETECT_CONFIG=/path/to/override.yaml (глубокое слияние поверх этого файла).
+version: 1
+
+# ---------------- общий бюджет и выбор устройства ----------------
+runtime:
+  device: auto            # auto | cuda | cpu
+  fp16: true              # только на CUDA
+  budget_s: 30.0          # мягкий бюджет на detect() целиком; при превышении режем TTA/тайлы/open-vocab и увеличиваем шаг
+  hard_budget_s: 60.0     # после этого — только closed-set с удвоенным шагом
+  batch_size: 16          # closed-set батч (RTX 4060 8 GB, fp16)
+  max_frames_in_memory: 32
+  # Нет весов/бэкендов → detect() бросает DetectorUnavailable (production сообщает unavailable).
+  # Mock НИКОГДА не включается автоматически — только явный тестовый режим SENTINEL_MOCK=1.
+  on_unavailable: raise   # raise | empty  (empty: вернуть [] и status=unavailable в last_stats())
+
+# ---------------- бэкенд A: closed-set (каждый сэмпл) ----------------
+closed_set:
+  enabled: true
+  # порядок попыток: первый доступный бэкенд выигрывает
+  backends: [hf]            # baseline. Дообученный ONNX — опционально: [onnx_finetuned, hf] (или SENTINEL_DETECT_EXTRAS=finetuned)
+  hf_model_id: PekingU/rtdetr_v2_r18vd          # Apache-2.0 (заявлено); скачан у L1 в weights/hf/hub
+  # Резервный детектор НЕ подставляется молча: список пуст. Явный выбор (после замера L2), напр.:
+  #   hf_model_id: ustc-community/dfine-medium-obj2coco   (скачан у L1)  — замена основного
+  #   hf_fallback_ids: [ustc-community/dfine-medium-obj2coco]            — резерв (status=degraded + warning)
+  hf_fallback_ids: []
+  proxy_labels: true        # COCO-классы-заместители (book→document, handbag→bag, bowl→cup...) — с исходным именем в source
+  onnx_path: detect/finetuned/model.onnx       # относительно SENTINEL_WEIGHTS
+  onnx_labels: detect/finetuned/labels.json    # список имён классов (из LABELS)
+  onnx_merge_with_hf: true                      # дообученная модель (cash, cash_bag, ...) + COCO-модель (person, ...)
+  input_size: 640
+  min_score: 0.15                               # «сырой» порог до TTA-слияния
+  # пороги по меткам после слияния (вид сверху — COCO-модели видят хуже → для person ниже)
+  score_thr:
+    default: 0.40
+    person: 0.25
+    cell_phone: 0.25
+    cup: 0.30
+    bottle: 0.30
+    food: 0.30
+    laptop: 0.40
+    bag: 0.30
+    document: 0.35
+    cash: 0.30
+    cash_bag: 0.30
+    money_counter: 0.35
+    safe: 0.35
+    safe_open: 0.35
+  max_dets_per_frame: 60
+
+# ---------------- TTA ----------------
+# Всё ниже (TTA, тайлы, open-vocab) — ОПЦИОНАЛЬНО, по умолчанию выключено (критический путь = baseline).
+# Включение: здесь, через SENTINEL_DETECT_CONFIG или env SENTINEL_DETECT_EXTRAS=tta,tiles,open_vocab
+tta:
+  hflip: false              # горизонтальный флип
+  hflip_on: keyframes       # all | keyframes  (keyframes — экономия ~2× времени)
+  merge: wbf                # wbf | nms
+  iou_thr: 0.55
+  single_view_penalty: 0.85 # множитель score для боксов, найденных только в одном виде (wbf)
+
+# ---------------- SAHI-стиль: слайсинг на тайлы ----------------
+tiling:
+  enabled: false
+  on: keyframes             # all | keyframes | off
+  tile_frac: 1.0            # сторона квадратного тайла = доля короткой стороны (1.0 → портрет 464×848 даёт 2 тайла)
+  overlap: 0.15
+  contained_ios: 0.8        # тайловый бокс, на ≥80% лежащий внутри полнокадрового той же метки, — дубль
+  min_motion: 0.0           # тайлим только кадры с motion_energy >= (0 — все ключевые)
+  keep_labels: [cell_phone, cup, bottle, food, cash, keys, document, money_counter]
+  merge_iou: 0.5
+  edge_margin: 0.01         # отбрасываем боксы, касающиеся внутренней границы тайла (обрезанные объекты)
+
+# ---------------- бэкенд B: open-vocab (ключевые кадры) ----------------
+open_vocab:
+  enabled: false
+  hf_model_id: google/owlv2-base-patch16-ensemble   # Apache-2.0
+  input_size: 960           # родной размер OWLv2; меньше (768) → быстрее, с интерполяцией позиционных эмбеддингов
+  batch_size: 4
+  interval_s: 1.0           # регулярные ключевые кадры ~1 fps
+  max_frames: 240           # потолок на видео
+  nms_iou: 0.4
+  max_dets_per_frame: 40
+  # запрос → метка из LABELS + порог (OWLv2 даёт низкие score, пороги ~0.1–0.3)
+  queries:
+    - {text: "stack of banknotes",      label: cash,          thr: 0.20}
+    - {text: "cash money",              label: cash,          thr: 0.22}
+    - {text: "money counting machine",  label: money_counter, thr: 0.20}
+    - {text: "metal safe",              label: safe,          thr: 0.18}
+    - {text: "open safe door",          label: safe_open,     thr: 0.22}
+    - {text: "green canvas bag",        label: cash_bag,      thr: 0.20}
+    - {text: "glass door",              label: door,          thr: 0.18}
+    - {text: "open door",               label: door_open,     thr: 0.22}
+    - {text: "mobile phone in hand",    label: cell_phone,    thr: 0.20}
+    - {text: "food",                    label: food,          thr: 0.25}
+    - {text: "drink cup",               label: cup,           thr: 0.22}
+    - {text: "keys",                    label: keys,          thr: 0.25}
+  # максимальная площадь бокса (доля кадра), выше — отбрасываем (OWL любит «всю сцену»)
+  max_area:
+    default: 0.6
+    door: 0.9
+    door_open: 0.9
+  min_area: 0.0004
+
+# ---------------- activity gating ----------------
+gating:
+  motion_thumb_width: 64      # ширина миниатюры для своей разницы кадров
+  motion_keyframe_thr: 0.035  # абсолютный порог motion_energy (0..1) для доп. ключевого кадра
+  motion_rel_k: 2.5           # ... или > k × скользящая медиана
+  min_gap_s: 0.4              # не чаще одного motion-кадра за min_gap_s
+  window: 25                  # окно скользящей медианы (кадров)
+
+# ---------------- финальное слияние источников ----------------
+merge:
+  iou_thr: 0.6               # NMS между closed-set / tiles / open-vocab внутри одной метки
+  cross_label_suppress:      # если open-vocab и closed-set дают одно и то же, оставляем одну метку
+    - [cell_phone, cell_phone]
+
+# ---------------- desk_inventory / safe_door_state (вход для правила «ушла и оставила») ----------------
+# Результат: present / unknown (детектор НИКОГДА не утверждает «нет»); для сейфа open / closed / unknown.
+inventory:
+  # АБЛЯЦИЯ (одна): baseline — только closed-set (COCO) на кадрах окна;
+  # rare_open_vocab — + редкий проход OWLv2 (только по запросу правил, ≤ max_frames кадров) с контрастными запросами.
+  # По умолчанию baseline, пока L2 не измерил выигрыш (env: SENTINEL_DETECT_EXTRAS=rare_open_vocab).
+  mode: baseline
+  window_s: 1.0             # окно вокруг t: кадры t−w/2 … t+w/2 (точные кадры clip.frame_at)
+  n_frames: 3
+  min_frames_present: 2     # present — найден минимум на 2 кадрах окна (подавление единичных ложных срабатываний)
+  zone_overlap: 0.5         # доля площади бокса внутри зоны (desk ∪ cash_tray или safe)
+  desk_zones: [desk, cash_tray]
+  safe_zones: [safe]
+  occlusion_warn: 0.6       # зона стола закрыта людьми сильнее → предупреждение «отсутствие не проверяемо»
+  # baseline: метки closed-set → вид предмета. bag = сумка НЕИЗВЕСТНОГО типа (не cash_bag, не обязательно личная)
+  from_labels: {cup: cup, bottle: cup, food: food, cell_phone: phone, bag: bag}
+  # метки, которым доверяем ТОЛЬКО от дообученной на проверенной разметке модели (source finetuned:*)
+  from_finetuned: {cash: cash, cash_bag: cash_bag, cell_phone: phone, safe_open: safe_open}
+  thr:                      # пороги по виду на кадре — ПРИОРЫ, не калиброваны (калибровка: python -m ml.detect.calibrate)
+    cash: 0.30
+    cash_bag: 0.30
+    cup: 0.35
+    food: 0.35
+    phone: 0.30
+    personal_item: 0.30
+    bag: 0.35
+    safe_open: 0.35
+  rare_open_vocab:
+    max_frames: 2           # OWLv2 — не более 2 кадров окна на вызов (стоимость), closed-set — на всех n_frames
+    queries:                # группы запросов; контрастные пары защищают от подмены смысла
+      cash: ["stack of banknotes", "cash money"]
+      cash_bag: ["green canvas money bag", "cash collection bag"]
+      generic_bag: ["handbag", "backpack", "plastic shopping bag"]
+      personal_item: ["jacket", "coat"]
+      phone: ["mobile phone", "smartphone"]
+      landline: ["desk telephone", "landline phone"]
+      cup: ["cup", "drink bottle"]
+      food: ["food"]
+      safe_open: ["open safe", "open safe door"]
+      safe_closed: ["closed metal safe", "closed safe door"]
+    thr: {cash: 0.25, cash_bag: 0.30, generic_bag: 0.30, personal_item: 0.30, phone: 0.25, landline: 0.25,
+          cup: 0.25, food: 0.30, safe_open: 0.20, safe_closed: 0.20}
+    margin: 0.05            # cash_bag − generic_bag, phone − landline, open − closed
+
+# ---------------- mock (SENTINEL_MOCK=1) ----------------
+# Синтетика: фон тёмный, объекты — залитые эллипсы/прямоугольники цветов ниже (BGR).
+mock:
+  tolerance: 28            # допуск по каждому каналу BGR
+  min_area_px: 30
+  score: 0.9
+  motion_person: true      # на реальных видео в mock-режиме: крупные движущиеся пятна → person (score 0.5)
+  motion_person_min_area: 0.02
+  palette:                 # BGR — см. ml/detect/synth.py
+    person:        [0, 0, 255]
+    cell_phone:    [255, 0, 255]
+    cup:           [0, 255, 255]
+    bottle:        [255, 255, 0]
+    food:          [0, 140, 255]
+    cash:          [140, 255, 140]
+    money_counter: [128, 0, 128]
+    laptop:        [70, 70, 70]
+    safe:          [170, 170, 170]
+    safe_open:     [255, 0, 0]
+    door:          [255, 200, 140]
+    door_open:     [200, 100, 0]
+    cash_bag:      [0, 110, 0]
+    bag:           [20, 70, 140]
+    document:      [245, 245, 245]
+    keys:          [120, 120, 0]
+  # mock-«понятия» вне LABELS — только для MockOpenVocabScorer (контраст: стационарный телефон, куртка)
+  extra_palette:
+    landline:      [60, 160, 60]
+    jacket:        [180, 60, 180]

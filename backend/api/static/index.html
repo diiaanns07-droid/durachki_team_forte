@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kassa Sentinel</title>
+<style>
+  :root { --bg:#f6f7f9; --fg:#1d2330; --muted:#667085; --card:#fff; --line:#e3e6ec; --acc:#2f6fed; --bad:#c43d2f; --ok:#1f8a4c; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12151b; --fg:#e8ebf1; --muted:#98a2b3; --card:#1b2029; --line:#2b313d; --acc:#6d9bff; --bad:#ff7a6b; --ok:#4fd18b; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--fg); }
+  main { max-width: 980px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 8px 0 4px; } .muted { color: var(--muted); font-size: 13px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 12px 0; }
+  input, button { font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); }
+  button { background: var(--acc); color: #fff; border: 0; cursor: pointer; } button[disabled] { opacity: .5; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .verdict { font-weight: 700; font-size: 18px; } .violation { color: var(--bad); } .no_violation { color: var(--ok); }
+  .grid { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+  video { width: 100%; max-height: 70vh; background: #000; border-radius: 8px; }
+  .v { border-top: 1px solid var(--line); padding: 10px 0; } .v img { max-width: 160px; border-radius: 6px; margin: 4px 4px 0 0; cursor: pointer; }
+  .tc { font-variant-numeric: tabular-nums; color: var(--acc); cursor: pointer; }
+  progress { width: 100%; } .err { color: var(--bad); white-space: pre-wrap; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Kassa Sentinel</h1>
+  <div class="muted">Встроенная страница API (если frontend/dist не собран). Результат — подсказка проверяющему, не юридическое заключение.</div>
+
+  <section id="login" class="card hidden">
+    <form id="loginForm" class="row" autocomplete="off">
+      <input id="secret" type="password" placeholder="API-ключ или пароль UI" required style="flex:1;min-width:220px">
+      <button type="submit">Войти</button>
+    </form>
+    <div id="loginErr" class="err"></div>
+  </section>
+
+  <section id="app" class="hidden">
+    <div class="card">
+      <form id="uploadForm" class="row">
+        <input id="file" type="file" accept=".mov,.mp4,.m4v,video/*" required style="flex:1;min-width:220px">
+        <button id="go" type="submit">Проверить</button>
+        <button id="logout" type="button" style="background:var(--muted)">Выйти</button>
+      </form>
+      <progress id="bar" value="0" max="1" class="hidden"></progress>
+      <div id="status" class="muted"></div>
+      <div id="uploadErr" class="err"></div>
+    </div>
+    <div id="result" class="card hidden">
+      <div class="grid">
+        <div><video id="player" controls playsinline preload="metadata"></video></div>
+        <div><div id="verdict" class="verdict"></div><div id="list"></div></div>
+      </div>
+    </div>
+  </section>
+</main>
+<script>
+(() => {
+  "use strict";
+  // Ключ НИКОГДА не хранится в JS/URL/localStorage: он один раз уходит в POST /ui/v1/session,
+  // сервер ставит HttpOnly cookie. Для POST нужен CSRF-токен из ответа (он не секрет без cookie).
+  let csrf = "";
+  const $ = (id) => document.getElementById(id);
+  const show = (id, on) => $(id).classList.toggle("hidden", !on);
+
+  async function session() {
+    const r = await fetch("/ui/v1/session", { credentials: "same-origin" });
+    if (r.ok) { csrf = (await r.json()).csrf_token; show("login", false); show("app", true); }
+    else { show("login", true); show("app", false); }
+  }
+
+  $("loginForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const v = $("secret").value; $("secret").value = "";
+    const body = v.startsWith("ks_") ? { api_key: v } : { password: v, api_key: v };
+    const r = await fetch("/ui/v1/session", { method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    $("loginErr").textContent = r.ok ? "" : (r.status === 429 ? "Слишком много попыток" : "Неверный ключ или пароль");
+    if (r.ok) { csrf = (await r.json()).csrf_token; await session(); }
+  });
+
+  $("logout").addEventListener("click", async () => {
+    await fetch("/ui/v1/session", { method: "DELETE", credentials: "same-origin" });
+    csrf = ""; await session();
+  });
+
+  $("uploadForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const f = $("file").files[0]; if (!f) return;
+    $("uploadErr").textContent = ""; show("result", false); $("go").disabled = true;
+    const fd = new FormData(); fd.append("file", f, f.name);
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/ui/v1/analyze"); xhr.setRequestHeader("X-CSRF-Token", csrf);
+    show("bar", true);
+    xhr.upload.onprogress = (ev) => { if (ev.lengthComputable) { $("bar").value = ev.loaded / ev.total; $("status").textContent = "Загрузка…"; } };
+    xhr.onload = () => {
+      let d = {}; try { d = JSON.parse(xhr.responseText); } catch (_) {}
+      if (xhr.status !== 200) { $("go").disabled = false; show("bar", false); $("uploadErr").textContent = (d.detail || ("HTTP " + xhr.status)); if (xhr.status === 401) session(); return; }
+      poll(d.job_id);
+    };
+    xhr.onerror = () => { $("go").disabled = false; $("uploadErr").textContent = "Сеть недоступна"; };
+    xhr.send(fd);
+  });
+
+  async function poll(id) {
+    const r = await fetch("/ui/v1/jobs/" + encodeURIComponent(id), { credentials: "same-origin" });
+    const d = await r.json();
+    if (d.status === "processing") {
+      $("bar").value = d.progress || 0;
+      $("status").textContent = "Анализ: " + (d.stage || "…") + (d.queue_position ? " (в очереди: " + d.queue_position + ")" : "");
+      setTimeout(() => poll(id), 1000); return;
+    }
+    $("go").disabled = false; show("bar", false);
+    if (d.status === "failed") { $("status").textContent = ""; $("uploadErr").textContent = "Анализ не завершён: " + (d.error || ""); return; }
+    render(id, d);
+  }
+
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+  function render(id, d) {
+    $("status").textContent = "";
+    show("result", true);
+    const p = $("player"); p.src = "/ui/v1/jobs/" + encodeURIComponent(id) + "/video"; // cookie + Range
+    const vd = $("verdict");
+    vd.className = "verdict " + d.verdict;
+    vd.textContent = d.verdict === "violation" ? "Обнаружены признаки возможного нарушения" : "Признаков нарушения не обнаружено";
+    const list = $("list"); list.replaceChildren();
+    (d.violations || []).forEach((v) => {
+      const box = el("div", "v");
+      const head = el("div");
+      const tc = el("span", "tc", v.timecode_sec.toFixed(1) + " с");
+      tc.onclick = () => { p.currentTime = v.timecode_sec; p.play(); };
+      head.append(tc, document.createTextNode(" — "), el("b", null, v.type));
+      box.append(head, el("div", null, v.description));
+      (v.rules || []).forEach((r) => {
+        if (!/^https?:\/\//.test(r.url || "")) return;
+        const a = el("a", "muted", (r.document || "") + (r.clause ? ", " + r.clause : ""));
+        a.href = r.url; a.target = "_blank"; a.rel = "noopener noreferrer";
+        box.append(el("div", null), a);
+      });
+      const imgs = el("div");
+      (v.evidence_frames || []).forEach((f) => {
+        const img = el("img"); img.alt = "кадр " + f.timestamp_sec + " с";
+        img.src = "data:image/jpeg;base64," + f.image_base64;
+        img.onclick = () => { p.currentTime = f.timestamp_sec; };
+        imgs.append(img);
+      });
+      box.append(imgs); list.append(box);
+    });
+  }
+
+  session();
+})();
+</script>
+</body>
+</html>

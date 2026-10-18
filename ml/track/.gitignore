@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.mov
+*.mp4
+*.avi
+*.jpg
+*.png
+*.onnx
+*.pt
+*.safetensors
+*.gguf
+_out/

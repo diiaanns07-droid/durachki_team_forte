@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="description" content="Kassa Sentinel — локальный AI-контроль видеозаписей кассы" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Kassa Sentinel</title>
+    <script>
+      // Тема до первого рендера — без «вспышки» светлой темы.
+      try {
+        var t = localStorage.getItem("ks.theme");
+        var dark = t === "dark" || (!t && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        if (dark) document.documentElement.classList.add("dark");
+      } catch (e) {}
+    </script>
+  </head>
+  <body class="bg-slate-50 text-slate-900 antialiased dark:bg-ink-950 dark:text-slate-100">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

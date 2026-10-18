@@ -1,0 +1,5 @@
+# Пресет для замера L2: вернуть хрупкие жесты фазы 1 (по умолчанию выключены).
+signals:
+  enabled: [phone_in_hand, eating_drinking, hands_hidden, handover_motion, phone_to_ear, cashier_facing_away]
+  extras:
+    bending_to_safe: true

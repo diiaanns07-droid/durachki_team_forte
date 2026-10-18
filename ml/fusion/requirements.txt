@@ -1,0 +1,9 @@
+# ml/fusion (A12). Моделей/весов нет. Совместимо с tools/dataprep/requirements-l1.lock.txt
+# (numpy 2.4.6, opencv-python-headless 4.14.0.94, PyYAML 6.0.3, Pillow 13.0.0 — тесты пройдены на этих версиях).
+# Лицензии: numpy BSD-3, OpenCV Apache-2.0, PyYAML MIT, Pillow MIT-CMU (HPND).
+numpy>=1.26,<3
+opencv-python-headless>=4.9,<6
+PyYAML>=6.0,<7
+Pillow>=10.0,<14  # проверено на 13.0.0 (lock L1): ImageFont.truetype/getbbox, Image.fromarray, ImageDraw.text
+# тесты
+pytest>=8.0

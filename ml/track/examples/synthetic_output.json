@@ -1,0 +1,471 @@
+{
+ "_synthetic": "СИНТЕТИКА ml.track.synth.scene_v02(seed=0): кассир уходит в 15 с через дверь (19 с) и возвращается в 40 с. Реальных данных нет.",
+ "units": {
+  "t": "секунды от начала ролика (PTS), абсолютные и в окне refine",
+  "bbox": "x1,y1,x2,y2 нормировано 0..1 после поворота"
+ },
+ "tracks_person": [
+  {
+   "track_id": 1,
+   "label": "person",
+   "role": "cashier",
+   "role_conf": 0.65,
+   "boxes": [
+    [
+     0.0,
+     0.40038,
+     0.6596,
+     0.60038,
+     0.7996
+    ],
+    [
+     0.2,
+     0.40031,
+     0.65839,
+     0.60031,
+     0.79839
+    ],
+    [
+     "..."
+    ],
+    [
+     19.0,
+     0.02035,
+     0.14679,
+     0.22035,
+     0.28679
+    ]
+   ]
+  },
+  {
+   "track_id": 2,
+   "label": "person",
+   "role": "cashier",
+   "role_conf": 0.909,
+   "boxes": [
+    [
+     40.0,
+     0.01808,
+     0.1522,
+     0.21808,
+     0.2922
+    ],
+    [
+     40.2,
+     0.0347,
+     0.17742,
+     0.2347,
+     0.31742
+    ],
+    [
+     "..."
+    ],
+    [
+     59.8,
+     0.39759,
+     0.65739,
+     0.59759,
+     0.79739
+    ]
+   ]
+  }
+ ],
+ "tracks_object_sample": [
+  {
+   "track_id": 3,
+   "label": "cash",
+   "role": "unknown",
+   "role_conf": 0.0,
+   "boxes": [
+    [
+     0.0,
+     0.44,
+     0.56,
+     0.52,
+     0.6
+    ],
+    [
+     0.2,
+     0.44,
+     0.56,
+     0.52,
+     0.6
+    ],
+    [
+     "..."
+    ],
+    [
+     59.8,
+     0.44,
+     0.56,
+     0.52,
+     0.6
+    ]
+   ]
+  },
+  {
+   "track_id": 4,
+   "label": "door",
+   "role": "unknown",
+   "role_conf": 0.0,
+   "boxes": [
+    [
+     0.0,
+     0.02,
+     0.05,
+     0.22,
+     0.4
+    ],
+    [
+     0.2,
+     0.02,
+     0.05,
+     0.22,
+     0.4
+    ],
+    [
+     "..."
+    ],
+    [
+     59.8,
+     0.02,
+     0.05,
+     0.22,
+     0.4
+    ]
+   ]
+  }
+ ],
+ "zones": [
+  {
+   "name": "cashier_area",
+   "polygon": [
+    [
+     0.2678,
+     0.6532
+    ],
+    [
+     0.4043,
+     0.6517
+    ],
+    [
+     0.5423,
+     0.6517
+    ],
+    [
+     0.5668,
+     0.6532
+    ],
+    [
+     0.7462,
+     0.6831
+    ],
+    [
+     0.7462,
+     0.8027
+    ],
+    [
+     0.2678,
+     0.8027
+    ]
+   ],
+   "conf": 0.909
+  },
+  {
+   "name": "desk",
+   "polygon": [
+    [
+     0.3334,
+     0.4845
+    ],
+    [
+     0.5934,
+     0.4845
+    ],
+    [
+     0.7494,
+     0.5105
+    ],
+    [
+     0.7494,
+     0.6145
+    ],
+    [
+     0.3334,
+     0.6145
+    ]
+   ],
+   "conf": 0.9
+  },
+  {
+   "name": "safe",
+   "polygon": [
+    [
+     0.7243,
+     0.7243
+    ],
+    [
+     0.9657,
+     0.7243
+    ],
+    [
+     0.9657,
+     0.9657
+    ],
+    [
+     0.7243,
+     0.9657
+    ]
+   ],
+   "conf": 1.0
+  },
+  {
+   "name": "door",
+   "polygon": [
+    [
+     0.01,
+     0.0325
+    ],
+    [
+     0.23,
+     0.0325
+    ],
+    [
+     0.23,
+     0.4175
+    ],
+    [
+     0.01,
+     0.4175
+    ]
+   ],
+   "conf": 1.0
+  },
+  {
+   "name": "client_area",
+   "polygon": [
+    [
+     0.0356,
+     0.1471
+    ],
+    [
+     0.1736,
+     0.1471
+    ],
+    [
+     0.292,
+     0.301
+    ],
+    [
+     0.4172,
+     0.4702
+    ],
+    [
+     0.4172,
+     0.5668
+    ],
+    [
+     0.2792,
+     0.5668
+    ],
+    [
+     0.229,
+     0.5194
+    ],
+    [
+     0.0563,
+     0.2749
+    ],
+    [
+     0.0356,
+     0.2437
+    ]
+   ],
+   "conf": 0.576
+  },
+  {
+   "name": "cash_tray",
+   "polygon": [
+    [
+     0.43,
+     0.555
+    ],
+    [
+     0.53,
+     0.555
+    ],
+    [
+     0.53,
+     0.605
+    ],
+    [
+     0.43,
+     0.605
+    ]
+   ],
+   "conf": 1.0
+  }
+ ],
+ "info.coverage": {
+  "frames_total": 300,
+  "frames_processed": 300,
+  "frames_with_detections": 300,
+  "t_first_detection": 0.0,
+  "t_last_detection": 59.8,
+  "t_window": [
+   0.0,
+   59.8
+  ],
+  "declared_duration": 60.0,
+  "span_frac": 1.0,
+  "visibility_loss": [],
+  "visibility_check": "objects"
+ },
+ "info.roles": {
+  "2": {
+   "role": "cashier",
+   "conf": 0.909,
+   "reasons": [
+    "seated_at_cashier_side",
+    "side_from_safe",
+    "near_money_counter",
+    "stationary"
+   ]
+  },
+  "1": {
+   "role": "cashier",
+   "conf": 0.65,
+   "reasons": [
+    "cashier_by_behavior",
+    "seated_at_cashier_side",
+    "side_from_safe"
+   ]
+  }
+ },
+ "info.zones.method": {
+  "desk": "objects",
+  "safe": "objects",
+  "cashier_area": "cashier_dwell+desk_band",
+  "client_area": "visitors_opposite_side",
+  "door": "objects",
+  "cash_tray": "cash_cluster"
+ },
+ "queries": {
+  "cashier_left_workplace(30.0)": {
+   "value": true,
+   "conf": 0.868,
+   "source": "observed_away_from_workplace",
+   "track_ids": [
+    1,
+    2
+   ],
+   "t_event": 15.6,
+   "detail": {
+    "t_end": 43.4
+   }
+  },
+  "cashier_left_room(30.0)": {
+   "value": true,
+   "conf": 0.52,
+   "source": "last_seen_in_door_zone",
+   "track_ids": [
+    1,
+    2
+   ],
+   "t_event": 19.0,
+   "detail": {}
+  },
+  "person_entered(40.2, role='cashier')": {
+   "value": true,
+   "conf": 0.8,
+   "source": "appeared_in_door_zone",
+   "track_ids": [
+    2
+   ],
+   "t_event": 40.0,
+   "detail": {}
+  },
+  "n_outsiders(30.0)": {
+   "value": 0,
+   "conf": 0.9,
+   "source": "observed_tracks_by_role",
+   "track_ids": [],
+   "t_event": null,
+   "detail": {
+    "visitor": 0,
+    "unknown": 0,
+    "low_quality": 0,
+    "upper_bound": 0
+   }
+  },
+  "outsider_at_cashier_side(30.0)": {
+   "value": false,
+   "conf": 0.909,
+   "source": "no_outsider_at_cashier_side",
+   "track_ids": [],
+   "t_event": null,
+   "detail": {
+    "visitor": [],
+    "unknown": [],
+    "collector": []
+   }
+  }
+ },
+ "events": [
+  {
+   "kind": "cashier_left_workplace",
+   "t": 15.6,
+   "t_end": 43.4,
+   "conf": 0.868,
+   "source": "observed_away_from_workplace",
+   "track_ids": [
+    1,
+    2
+   ],
+   "role": "cashier",
+   "facts": [
+    "Кассир вне зоны рабочего места с 15.6 с"
+   ]
+  },
+  {
+   "kind": "cashier_left_room",
+   "t": 19.0,
+   "t_end": null,
+   "conf": 0.52,
+   "source": "last_seen_in_door_zone",
+   "track_ids": [
+    1,
+    2
+   ],
+   "role": "cashier",
+   "facts": []
+  },
+  {
+   "kind": "person_entered",
+   "t": 40.0,
+   "t_end": null,
+   "conf": 0.8,
+   "source": "appeared_in_door_zone",
+   "track_ids": [
+    2
+   ],
+   "role": "cashier",
+   "facts": [
+    "Человек (трек #2, роль: cashier) появился в кадре в 40.0 с в зоне двери"
+   ]
+  },
+  {
+   "kind": "cashier_returned_workplace",
+   "t": 43.4,
+   "t_end": null,
+   "conf": 0.868,
+   "source": "observed_at_workplace",
+   "track_ids": [
+    1,
+    2
+   ],
+   "role": "cashier",
+   "facts": []
+  }
+ ]
+}

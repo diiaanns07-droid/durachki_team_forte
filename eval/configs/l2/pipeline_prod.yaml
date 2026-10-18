@@ -1,0 +1,17 @@
+# L2: продовые настройки оркестратора (поверх backend/pipeline/config.yaml через SENTINEL_PIPELINE_CONFIG).
+# VLM-стадия получает бюджет по остатку дедлайна, а не по числу кадров; оценка VRAM для Qwen3-VL-4B nf4,
+# один кадр на вызов (~3 ГБ), чтобы воркер не перезапускался перед каждой VLM-стадией.
+budgets_s:
+  vlm_verify: 300
+  vlm_discover: 3000
+gpu:
+  vram_gb:
+    vlm_verify: 3.0
+    vlm_discover: 3.0
+warmup:
+  vlm: true
+timeouts:
+  min_s: 150.0          # холодный старт CUDA и длинные видео: детектор не должен падать по таймауту стадии
+  hard_factor: 6.0
+executor:
+  load_clip_timeout_s: 120

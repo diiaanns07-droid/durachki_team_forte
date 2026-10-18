@@ -1,0 +1,9 @@
+# ml/scene (A08) — ядро только CPU, без весов. Версии не поднимать вслепую: на машине L2 lock L1
+# (Python 3.11, numpy 2.4.6, opencv-python-headless 4.14.0.94, pyyaml 6.0.3, torch 2.11.0+cu128, transformers 5.20.1)
+numpy>=1.26            # BSD-3-Clause
+opencv-python-headless>=4.8,<5   # Apache-2.0 — ROI, CS-SSIM, phase correlation, HSV, отчёт (PNG)
+pyyaml>=6.0            # MIT — config.yaml
+pytest>=8.0            # MIT — тесты
+# опционально (не ставится в CI/прод автоматически):
+#   matplotlib — только python -m ml.scene.plot (отчёт report.py рисует через OpenCV)
+#   torch + transformers — только именователь H2 (safe.namer.backend: siglip2); берутся из lock L1
