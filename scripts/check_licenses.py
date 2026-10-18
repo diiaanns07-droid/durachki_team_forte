@@ -46,7 +46,8 @@ MAX_TRACKED_MB = 10.0
 
 def _iter(root: Path, pattern: str):
     for p in root.rglob(pattern):
-        if not any(part in SKIP_DIRS for part in p.relative_to(root).parts):
+        # .venv-* — локальные окружения инструментов (например datasets/det/.venv-ls), не код репо
+        if not any(part in SKIP_DIRS or part.startswith(".venv") for part in p.relative_to(root).parts):
             yield p
 
 

@@ -135,6 +135,20 @@ def collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
     return {"pixel_values": torch.stack([b["pixel_values"] for b in batch]), "labels": [b["labels"] for b in batch]}
 
 
+def _guard_hf_datasets_shadow() -> None:
+    """В корне репо есть папка datasets/ (разметка: datasets/det, datasets/extra) без __init__.py. Python видит её
+    как namespace-пакет «datasets», а transformers проверяет HF datasets только через find_spec — и Trainer падает
+    на `datasets.Dataset` (AttributeError). Если «datasets» — не HF-библиотека, говорим Trainer, что её нет."""
+    import importlib.util
+
+    spec = importlib.util.find_spec("datasets")
+    if spec is None or spec.origin not in (None, "namespace"):
+        return  # нет вовсе или настоящая библиотека (обычный пакет с __init__.py)
+    import transformers.trainer as tt
+
+    tt.is_datasets_available = lambda: False
+
+
 def train(coco_path: str | Path, frames_root: Optional[str | Path], out_dir: str | Path, base_model: Optional[str] = None,
           classes: Sequence[str] = FINETUNE_CLASSES, epochs: int = 30, batch: int = 8, lr: float = 1e-4,
           max_steps: int = -1, val_frac: float = 0.2, augment: bool = True, model: Any = None,
@@ -170,6 +184,7 @@ def train(coco_path: str | Path, frames_root: Optional[str | Path], out_dir: str
         report_to=[], logging_steps=10, dataloader_num_workers=2 if cuda else 0, seed=seed,
         use_cpu=not cuda,
     )
+    _guard_hf_datasets_shadow()
     trainer = Trainer(model=model, args=args, train_dataset=ds_tr, eval_dataset=ds_va, data_collator=collate)
     trainer.train()
     hf_dir = out / "hf"
@@ -185,6 +200,36 @@ def train(coco_path: str | Path, frames_root: Optional[str | Path], out_dir: str
         "epochs": epochs, "max_steps": max_steps, "lr": lr, "batch": batch,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     return hf_dir
+
+
+def _float_trig_onnx(path: Path) -> int:
+    """Sin/Cos над double → Cast(float) → Sin/Cos → Cast(double). transformers ≥5 считает синусные позиционные
+    эмбеддинги RT-DETRv2 в float64, а у onnxruntime нет Sin/Cos для double (NOT_IMPLEMENTED при загрузке).
+    Возвращает число исправленных узлов."""
+    import onnx
+    from onnx import TensorProto, helper, shape_inference
+
+    m = onnx.load(str(path))
+    inferred = shape_inference.infer_shapes(m)
+    dtypes = {vi.name: vi.type.tensor_type.elem_type
+              for vi in list(inferred.graph.value_info) + list(inferred.graph.input) + list(inferred.graph.output)}
+    nodes, fixed = [], 0
+    for n in m.graph.node:
+        if n.op_type in ("Sin", "Cos") and dtypes.get(n.input[0]) == TensorProto.DOUBLE:
+            x32, y32 = f"{n.name}_in_f32", f"{n.name}_out_f32"
+            nodes.append(helper.make_node("Cast", [n.input[0]], [x32], name=f"{n.name}_cast_in", to=TensorProto.FLOAT))
+            nodes.append(helper.make_node(n.op_type, [x32], [y32], name=n.name))
+            nodes.append(helper.make_node("Cast", [y32], [n.output[0]], name=f"{n.name}_cast_out",
+                                          to=TensorProto.DOUBLE))
+            fixed += 1
+        else:
+            nodes.append(n)
+    if fixed:
+        del m.graph.node[:]
+        m.graph.node.extend(nodes)
+        onnx.checker.check_model(m)
+        onnx.save(m, str(path))
+    return fixed
 
 
 def export_onnx(model_dir: str | Path, out_dir: str | Path, opset: int = 17, model: Any = None,
@@ -229,6 +274,9 @@ def export_onnx(model_dir: str | Path, out_dir: str | Path, opset: int = 17, mod
         torch.onnx.export(_Wrap(model), (dummy,), str(out / "model.onnx"), dynamo=False, **kw)
     except TypeError:  # старые torch без аргумента dynamo
         torch.onnx.export(_Wrap(model), (dummy,), str(out / "model.onnx"), **kw)
+    n_fixed = _float_trig_onnx(out / "model.onnx")
+    if n_fixed:
+        log.info("onnx: %d Sin/Cos над double переведены во float (onnxruntime)", n_fixed)
     id2label = {int(k): v for k, v in model.config.id2label.items()}
     do_norm = bool(getattr(processor, "do_normalize", False)) if processor is not None else False
     meta = {"labels": [id2label[i] for i in range(len(id2label))], "input_size": size, "do_normalize": do_norm,
