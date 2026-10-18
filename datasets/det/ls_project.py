@@ -3,6 +3,7 @@
     python datasets/det/ls_project.py start      # сервер на http://localhost:8080 (держать окно открытым)
     python datasets/det/ls_project.py setup      # во втором окне: проект + локальное хранилище + импорт tasks_new.json
     python datasets/det/ls_project.py export     # JSON из Label Studio → export_coco.py → datasets/det/annotations.json
+    python datasets/det/ls_project.py tabs       # вкладки «Val» (проверить первыми) и «Train» по split.json
     python datasets/det/ls_project.py config     # напечатать XML-конфиг разметки (для ручной настройки)
 
 Label Studio стоит в отдельном venv datasets/det/.venv-ls (у него жёсткие пины зависимостей).
@@ -49,6 +50,7 @@ def label_config() -> str:
                        for i, c in enumerate(CLASSES))
     return f"""<View>
   <Header value="$video_id · t=$t_sec с"/>
+  <Header value="$qa_note" size="6"/>
   <Image name="image" value="$image" zoom="true" zoomControl="true" brightnessControl="true" contrastControl="true"/>
   <RectangleLabels name="label" toName="image" strokeWidth="2" opacityPerLabel="false">
 {labels}
@@ -162,6 +164,83 @@ def cmd_setup(args) -> int:
     return 0
 
 
+# (заголовок, поле data, значение): «Спорные» — кадры, где второй, контрольный проход нашёл проблему.
+TABS = [("0 · Спорные — проверить человеку", "qa", "check"),
+        ("1 · Val — проверить первыми (честная метрика)", "split", "val"),
+        ("2 · Train — для дообучения", "split", "train")]
+QA_RESULTS = DATA / "frames" / "_review" / "qa" / "results"
+
+
+def qa_marks() -> dict[str, tuple[str, str]]:
+    """file → ("check" | "ok", подсказка над кадром) из результатов qa_sheets.py (второй проход)."""
+    marks: dict[str, tuple[str, str]] = {}
+    for p in sorted(QA_RESULTS.glob("*.jsonl")) if QA_RESULTS.is_dir() else []:
+        for line in p.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            r = json.loads(line)
+            issues = r.get("issues") or []
+            bad = r.get("verdict") == "fix" or r.get("confidence") == "low"
+            note = "; ".join(f"#{i['box']} {i.get('detail') or i.get('problem')}" if i.get("box") else
+                             str(i.get("detail") or i.get("problem")) for i in issues)
+            if r.get("confidence") == "low":
+                note = (note + "; " if note else "") + "трудный кадр"
+            marks[r["file"]] = ("check", f"Контроль: {note}") if bad else ("ok", "Контроль: замечаний нет")
+    ru = QA_RESULTS.parent / "notes_ru.json"          # перевод подсказок для разметчика (если есть)
+    if ru.is_file():
+        for f, note in json.loads(ru.read_text(encoding="utf-8")).items():
+            if marks.get(f, ("",))[0] == "check":
+                marks[f] = ("check", note)
+    return marks
+
+
+def all_tasks(api: Api, pid: int) -> list[dict]:
+    page, tasks = 1, []
+    while True:
+        r = api("GET", f"/api/tasks?project={pid}&page={page}&page_size=500&fields=all")
+        batch = r.get("tasks", []) if isinstance(r, dict) else r
+        tasks += batch
+        if len(batch) < 500:
+            return tasks
+        page += 1
+
+
+def cmd_tabs(args) -> int:
+    """split.json → data.split; результаты контроля → data.qa/qa_note; вкладки «Спорные», Val, Train."""
+    api = api_from(args)
+    pid = project_id(api)
+    if pid is None:
+        raise SystemExit("проект не найден — сначала `ls_project.py setup`")
+    split_p = DET_DIR / "split.json"
+    if not split_p.is_file():
+        raise SystemExit("нет datasets/det/split.json — сначала export (или apply_review.py --coco)")
+    split = json.loads(split_p.read_text(encoding="utf-8"))["groups"]
+    marks = qa_marks()
+    api("PATCH", f"/api/projects/{pid}", {"label_config": label_config()})   # заголовок с подсказкой контроля
+    n = 0
+    for t in all_tasks(api, pid):
+        d = dict(t["data"])
+        s = split.get(d.get("group") or d.get("video_id"))
+        if s:
+            d["split"] = s
+        qa, note = marks.get(d.get("file"), ("", ""))
+        d["qa"], d["qa_note"] = qa, note
+        if d != t["data"]:
+            api("PATCH", f"/api/tasks/{t['id']}", {"data": d})
+            n += 1
+    have = {v["data"].get("title") for v in api("GET", f"/api/dm/views?project={pid}")}
+    for title, field, value in TABS:
+        if title not in have:
+            api("POST", "/api/dm/views", {"project": pid, "data": {"title": title, "filters": {
+                "conjunction": "and",
+                "items": [{"filter": f"filter:tasks:data.{field}", "operator": "equal", "type": "String",
+                           "value": value}]}}})
+    n_check = sum(m[0] == "check" for m in marks.values())
+    print(f"обновлено задач: {n}; спорных по контролю: {n_check} из {len(marks)}; вкладки: "
+          f"{', '.join(t for t, _, _ in TABS)}")
+    return 0
+
+
 def cmd_export(args) -> int:
     api = api_from(args)
     pid = project_id(api)
@@ -187,6 +266,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--tasks", type=Path, default=LS_DIR / "tasks_new.json")
     sub.add_parser("export", help="лишние аргументы уходят в export_coco.py (--val-frac, --val, --resplit, --out-dir)")
     sub.add_parser("config")
+    sub.add_parser("tabs", help="вкладки Val/Train в Label Studio по split.json")
     args, rest = ap.parse_known_args(argv)
     if rest and args.cmd != "export":
         ap.error(f"неизвестные аргументы: {' '.join(rest)}")
@@ -194,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "config":
         print(label_config())
         return 0
-    return {"start": cmd_start, "setup": cmd_setup, "export": cmd_export}[args.cmd](args)
+    return {"start": cmd_start, "setup": cmd_setup, "export": cmd_export, "tabs": cmd_tabs}[args.cmd](args)
 
 
 if __name__ == "__main__":
