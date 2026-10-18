@@ -37,6 +37,15 @@ class OnnxDetrBackend:
         avail = ort.get_available_providers()
         if device != "cpu" and "CUDAExecutionProvider" in avail:
             providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            # Без этого onnxruntime-gpu на Windows не находит CUDA/cuDNN и молча уходит на CPU (дообученный
+            # детектор: 16 мс/кадр на GPU против таймаута стадии на CPU). preload_dlls берёт библиотеки из torch.
+            if hasattr(ort, "preload_dlls"):
+                try:
+                    import torch  # noqa: F401  (DLL CUDA из колёс torch)
+
+                    ort.preload_dlls()
+                except Exception as e:  # noqa: BLE001
+                    log.warning("onnxruntime.preload_dlls: %s", e)
         self.sess = ort.InferenceSession(str(onnx_path), providers=providers)
         inp = self.sess.get_inputs()[0]
         self.input_name = inp.name

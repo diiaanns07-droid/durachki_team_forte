@@ -16,6 +16,18 @@ Datathon ForteBank 2026 · команда «durachki».
 | Норма РК со ссылкой на adilet.zan.kz | цитаты проверяются по сохранённым текстам; без подтверждённого пункта — честное «без пункта» |
 | Честная полнота анализа | «нарушений нет» выдаётся только при полном анализе, иначе — «нужен ручной просмотр» |
 
+## Как это выглядит
+
+Скриншоты синтетического демо: на реальных записях есть люди, поэтому их кадры в публичный репозиторий не попадают.
+
+| Загрузка записи | Анализ: стадии и прогресс |
+|---|---|
+| ![Загрузка](docs/screenshots/01-upload.png) | ![Обработка](docs/screenshots/02-processing.png) |
+
+| Отчёт: вердикт, эпизоды, лента риска, кадры-доказательства | Телефон |
+|---|---|
+| ![Отчёт](docs/screenshots/03-report.png) | ![Мобильная версия](docs/screenshots/04-mobile.png) |
+
 ---
 
 ## Почему это решение
@@ -53,19 +65,58 @@ curl https://<адрес>/api/v1/jobs/<job_id> -H "X-API-Key: <ключ>"
 Без верного ключа — 401. Схема — [`contracts/api_schema.json`](contracts/api_schema.json), проверка ответа —
 `python -m contracts.validate --jury resp.json`. Адрес, ключ и состав пакета для сдачи описаны в [`docs/SUBMISSION.md`](docs/SUBMISSION.md).
 
-## Запуск
+## Как запустить
 
-Сервер (Windows, Python 3.11, CUDA 12.8): веса скачиваются один раз, дальше всё офлайн.
+**Что нужно:** Windows 10/11, NVIDIA GPU от 6 ГБ (проверено на RTX 4060 8 ГБ и 4050 6 ГБ), Python 3.11
+(3.13 тоже работает), Node.js 18+, около 15 ГБ на диске под веса. Интернет нужен только один раз, чтобы скачать веса.
+
+**1. Код и видео**
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File deploy\windows\setup.ps1 -InstallMissing   # окружение и веса
-powershell -ExecutionPolicy Bypass -File deploy\windows\start.ps1                   # прогрев → пробный анализ → API → туннель
+git clone https://github.com/diiaanns07-droid/durachki_team_forte.git
+cd durachki_team_forte
+# видео датасета кладутся в data\raw\ (в git их нет)
 ```
 
-Профиль анализа выбирается в `deploy\.env` через `SENTINEL_PROFILE`. Лучший по замеру — `pose_rules_vlm01`,
-профили лежат в `deploy/profiles/`. Подробности: [`deploy/README.md`](deploy/README.md), Docker и Cloudflare Tunnel — там же.
+**2. Окружение, веса, фронтенд** (один раз)
 
-Для разработки (без GPU и весов): `make setup-dev && make test-fast && make e2e` — см. [`docs/DEVELOPERS.md`](docs/DEVELOPERS.md).
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\windows\setup.ps1 -InstallMissing   # .venv по lock-файлу + недостающее
+.venv\Scripts\python -m ml.detect.weights --download                               # детекторы RT-DETRv2 + OWLv2
+.venv\Scripts\python deploy\weights.py prepare --only "Qwen3-VL-4B-Instruct"       # VLM (6 ГБ: "Qwen3-VL-2B-Instruct")
+.venv\Scripts\python deploy\weights.py adopt                                       # инвентаризация весов → lock; дальше офлайн
+cd frontend; npm ci; npm run build; cd ..                                            # веб-интерфейс → frontend\dist
+copy deploy\.env.example deploy\.env                                                 # ключ доступа и профиль — в deploy\.env
+```
+
+**3. Запуск**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\windows\start.ps1          # прогрев → пробный анализ → API → туннель
+powershell -ExecutionPolicy Bypass -File deploy\windows\start.ps1 -NoTunnel  # только локально: http://127.0.0.1:8000
+```
+
+Откройте адрес из консоли (публичный адрес пишется в `logs\public_url.txt`), введите ключ из `deploy\.env`
+и перетащите `.mov`. Статус и остановка: `deploy\windows\status.ps1`, `deploy\windows\stop.ps1`.
+
+**Профиль анализа** задаётся в `deploy\.env` через `SENTINEL_PROFILE=pose_rules_vlm01`: это лучший по замеру
+профиль, все профили лежат в `deploy/profiles/`. На видеокарте с 6 ГБ нужна облегчённая VLM:
+`SENTINEL_VLM_PRESET=qwen3vl2b`.
+
+**Дообученный детектор** (сейф, деньги, сумка, дверь, счётная машинка):
+
+```powershell
+.venv\Scripts\python -m ml.detect.finetune train --coco datasets\det\annotations.json --annotator "<кто проверил>" --out runs\detect_ft
+.venv\Scripts\python -m ml.detect.finetune export --model runs\detect_ft\hf --out weights\detect\finetuned
+# в deploy\.env:  SENTINEL_DETECT_EXTRAS=finetuned
+```
+
+Обучение занимает около 45 минут на RTX 4050. Модуль учится только на разметке, проверенной человеком: финальная
+проверка 700 кадров идёт в Label Studio, вкладка «Спорные» (см. [`datasets/det/README.md`](datasets/det/README.md)).
+
+**Без GPU и весов** (только код, тесты и синтетическое демо): `make setup-dev && make test-fast && make e2e`, а
+интерфейс — `cd frontend && npm run dev`, дальше открыть `http://localhost:5173/?demo=1`.
+Подробнее — [`docs/DEVELOPERS.md`](docs/DEVELOPERS.md); Docker и Cloudflare Tunnel — [`deploy/README.md`](deploy/README.md).
 
 ## Как устроено
 
